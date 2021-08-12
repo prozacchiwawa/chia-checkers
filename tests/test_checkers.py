@@ -9,6 +9,7 @@ from clvm.operators import OPERATOR_LOOKUP
 from clvm.run_program import run_program
 
 from clvm_tools.binutils import disassemble
+from clvm_tools.sha256tree import sha256tree
 
 from chia.clvm.singleton import SINGLETON_LAUNCHER
 from chia.consensus.default_constants import DEFAULT_CONSTANTS
@@ -27,6 +28,9 @@ def appendlog(s):
     with open('test.log','a') as f:
         f.write(s)
         f.write('\n')
+
+def maskFor(x,y):
+    return 1 << ((8 * x) + y)
 
 def make_move_sexp(fromX,fromY,toX,toY):
     return fromX + (fromY << 8) + (toX << 16) + (toY << 24)
@@ -163,3 +167,85 @@ class TestCheckers:
         finally:
             await network.close()
 
+    # Wrong player can't move
+    @pytest.mark.asyncio
+    async def test_cant_make_invalid_move(self, setup):
+        inner_puzzle_code, network, alice, bob = setup
+
+        alice.add_block_callback(self.block_callback(network))
+        await network.farm_block(farmer=alice)
+
+        try:
+            appendlog('test_can_move')
+            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            assert launched_coin
+
+            move = make_move_sexp(0,2,1,4)
+            maybeMove = SExp.to(move).cons(SExp.to([]))
+
+            black_start = 0x205020502050205
+            source_mask = maskFor(0,2)
+            target_mask = maskFor(1,4)
+            black_move = black_start ^ source_mask ^ target_mask
+            fake_board = SExp.to([1, 0, 0xa040a040a040a040, black_move])
+
+            args = SExp.to([[], maybeMove, [("board", sha256tree(fake_board)), ("launcher", launched_coin.name())]])
+            appendlog(f'move is {args}')
+            appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
+            appendlog(f'launched_coin {launched_coin}')
+
+            after_first_move = await bob.spend_coin(
+                launched_coin,
+                push_tx=True,
+                amt=GAME_MOJO,
+                args=args
+            )
+
+            appendlog(f'after_first_move {after_first_move} {after_first_move.result} {after_first_move.outputs}')
+            assert 'error' in after_first_move.result
+
+        finally:
+            await network.close()
+
+    # Can't make invalid move.
+    @pytest.mark.asyncio
+    async def test_wrong_person_cant_move(self, setup):
+        inner_puzzle_code, network, alice, bob = setup
+
+        alice.add_block_callback(self.block_callback(network))
+        await network.farm_block(farmer=alice)
+
+        try:
+            appendlog('test_can_move')
+            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            assert launched_coin
+
+            move = make_move_sexp(0,2,1,3)
+            maybeMove = SExp.to(move).cons(SExp.to([]))
+
+            simArgs = SExp.to(["simulate", maybeMove, []])
+            cost, result = run_program(
+                launched_coin.puzzle(),
+                simArgs,
+                OPERATOR_LOOKUP
+            )
+
+            appendlog(f'result {disassemble(result)}')
+
+            args = SExp.to([[], maybeMove, [("board", result.get_tree_hash()), ("launcher", launched_coin.name())]])
+            appendlog(f'move is {args}')
+            appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
+            appendlog(f'launched_coin {launched_coin}')
+
+            after_first_move = await bob.spend_coin(
+                launched_coin,
+                push_tx=True,
+                amt=GAME_MOJO,
+                args=args
+            )
+
+            appendlog(f'after_first_move {after_first_move} {after_first_move.result} {after_first_move.outputs}')
+            assert 'error' in after_first_move.result
+
+        finally:
+            await network.close()
