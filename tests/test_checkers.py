@@ -149,7 +149,7 @@ class TestCheckers:
 
             appendlog(f'result {disassemble(result)}')
 
-            args = SExp.to([[], maybeMove, [("board", result.get_tree_hash()), ("launcher", launched_coin.name())]])
+            args = SExp.to([[], maybeMove, [("board", result), ("launcher", launched_coin.name())]])
             appendlog(f'move is {args}')
             appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
             appendlog(f'launched_coin {launched_coin}')

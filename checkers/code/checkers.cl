@@ -492,7 +492,7 @@
         )
 
     (defun validateBoard1 (board_hash fst rst)
-      (if (= (f fst) "board") (= (r fst) board_hash) rst)
+      (if (= (f fst) "board") (= (sha256tree (r fst)) board_hash) rst)
       )
 
     (defun validateBoard (board_hash extra)
