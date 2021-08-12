@@ -130,7 +130,7 @@ class TestCheckers:
 
             move = make_move_sexp(0,2,1,3)
             maybeMove = SExp.to(move).cons(SExp.to([]))
-            args = SExp.to([maybeMove])
+            args = SExp.to([[], maybeMove])
             appendlog(f'move is {args}')
             appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
             appendlog(f'launched_coin {launched_coin}')

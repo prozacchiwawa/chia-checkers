@@ -1,4 +1,4 @@
-(mod (BASE_INNER_PUZZLE_HASH P1_PK P2_PK P1_PH P2_PH AMT BOARD m)
+(mod (BASE_INNER_PUZZLE_HASH P1_PK P2_PK P1_PH P2_PH AMT BOARD d1 m)
 
     (defconstant AGG_SIG_ME 50)
     (defconstant CREATE_COIN 51)
@@ -482,16 +482,20 @@
     ; the move wasn't valid.
     (label "main"
            (if m
-               (makeMove
-                BASE_INNER_PUZZLE_HASH
-                P1_PK
-                P2_PK
-                P1_PH
-                P2_PH
-                AMT
-                m ;; move as the parent signs this as an argument.
-                (move (toMove (fromJust m)) BOARD)
-                )
+               (if (= d1 "simulate")
+                   (move (toMove (fromJust m)) BOARD)
+
+                   (makeMove
+                    BASE_INNER_PUZZLE_HASH
+                    P1_PK
+                    P2_PK
+                    P1_PH
+                    P2_PH
+                    AMT
+                    m ;; move as the parent signs this as an argument.
+                    (move (toMove (fromJust m)) BOARD)
+                    )
+                   )
 
              (if (availableMoves BOARD)
                  (x "not a win yet")
