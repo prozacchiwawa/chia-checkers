@@ -1,4 +1,4 @@
-(mod (BASE_INNER_PUZZLE_HASH P1_PK P2_PK P1_PH P2_PH AMT BOARD d1 m extra)
+(mod (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT BOARD d1 m extra)
 
     (defconstant AGG_SIG_ME 50)
     (defconstant CREATE_COIN 51)
@@ -78,6 +78,8 @@
         (sha256 1 TREE)
         )
       )
+
+    (defconstant emptyBoard (1 0 0xa040a040a040a040 0x205020502050205))
 
     (defun please_append_my_lists_i_promise_i_wont_use_a_reserved_word_to_describe_that_process (l1)
       (if l1
@@ -442,7 +444,7 @@
     (defun move (m b) (move1 (move2 m b)))
 
     ; Return the conditions this layer requires.
-    (defun makeMove (BASE_INNER_PUZZLE_HASH P1_PK P2_PK P1_PH P2_PH AMT mM b)
+    (defun makeMove (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT mM b)
       (list
        (list AGG_SIG_ME
              (if (board$next b) P2_PK P1_PK)
@@ -452,6 +454,7 @@
        (list CREATE_COIN
             (puzzle-hash-of-curried-function
              BASE_INNER_PUZZLE_HASH
+             LAUNCHER
              (sha256tree b)
              (sha256 AMT)
              (sha256 P2_PH)
@@ -477,6 +480,37 @@
     (defun toMove1 (ul) (c (moddiv (f ul) 256) (moddiv (r ul) 256)))
     (defun toMove (m) (toMove1 (moddiv m 65536)))
 
+    (defun validateLauncher1 (LAUNCHER fst rst)
+      (if (= (f fst) "launcher") (= (r fst) LAUNCHER) rst)
+      )
+
+    (defun validateLauncher (LAUNCHER extra)
+      1
+      ;; (if extra
+      ;;     (validateLauncher1 LAUNCHER (f extra) (validateLauncher LAUNCHER (r extra)))
+      ;;   0)
+        )
+
+    (defun validateBoard1 (board_hash fst rst)
+      (if (= (f fst) "board") (= (r fst) board_hash) rst)
+      )
+
+    (defun validateBoard (board_hash extra)
+      (if extra
+          (validateBoard1 board_hash (f extra) (validateBoard board_hash (r extra)))
+        0)
+      )
+
+    (defun validateInputs (LAUNCHER BOARD extra)
+      (if (validateLauncher LAUNCHER extra)
+          (if (validateBoard (sha256tree BOARD) extra)
+              BOARD
+            (x "board was not what was expected")
+            )
+        (x "launcher was not what was expected")
+        )
+      )
+
     ; If a move is chosen, makeMove will return a new coin unless
     ; fromJust will throw if move didn't return a board, indicating that
     ; the move wasn't valid.
@@ -487,13 +521,14 @@
 
                    (makeMove
                     BASE_INNER_PUZZLE_HASH
+                    LAUNCHER
                     P1_PK
                     P2_PK
                     P1_PH
                     P2_PH
                     AMT
                     m ;; move as the parent signs this as an argument.
-                    (move (toMove (fromJust m)) BOARD)
+                    (validateInputs LAUNCHER (move (toMove (fromJust m)) BOARD) extra)
                     )
                    )
 

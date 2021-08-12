@@ -61,7 +61,7 @@ class TestCheckers:
             extra_data_list = extra_data_list.rest()
 
             ed_key = ed_pair.first()
-            ed_value = ed_pair.rest().first()
+            ed_value = ed_pair.rest()
 
             appendlog(f'k = {ed_key} v = {ed_value}')
 
@@ -82,8 +82,12 @@ class TestCheckers:
         return cb
 
     async def launch_game(self,inner_puzzle_code,alice,bob):
+        use_coin = await alice.choose_coin(GAME_MOJO)
+        assert use_coin
+
         game_setup = inner_puzzle_code.curry(
             inner_puzzle_code.get_tree_hash(),
+            use_coin.name(), # Launcher
             alice.pk(),
             bob.pk(),
             alice.puzzle_hash,
@@ -96,7 +100,8 @@ class TestCheckers:
 
         return await alice.launch_smart_coin(
             game_setup,
-            amt=GAME_MOJO
+            amt=GAME_MOJO,
+            launcher=use_coin
         )
 
     # Code cribs a lot from pools code in chia-blockchain, also Quexington's
@@ -130,7 +135,17 @@ class TestCheckers:
 
             move = make_move_sexp(0,2,1,3)
             maybeMove = SExp.to(move).cons(SExp.to([]))
-            args = SExp.to([[], maybeMove, []])
+
+            simArgs = SExp.to(["simulate", maybeMove, []])
+            cost, result = run_program(
+                launched_coin.puzzle(),
+                simArgs,
+                OPERATOR_LOOKUP
+            )
+
+            appendlog(f'result {disassemble(result)}')
+
+            args = SExp.to([[], maybeMove, [("board", result.get_tree_hash()), ("launcher", launched_coin.name())]])
             appendlog(f'move is {args}')
             appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
             appendlog(f'launched_coin {launched_coin}')
