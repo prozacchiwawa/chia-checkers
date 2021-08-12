@@ -1,4 +1,4 @@
-(mod (BASE_INNER_PUZZLE_HASH P1_PK P2_PK P1_PH P2_PH AMT BOARD d1 m)
+(mod (BASE_INNER_PUZZLE_HASH P1_PK P2_PK P1_PH P2_PH AMT BOARD d1 m extra)
 
     (defconstant AGG_SIG_ME 50)
     (defconstant CREATE_COIN 51)
