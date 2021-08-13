@@ -16,7 +16,7 @@ from chia.consensus.default_constants import DEFAULT_CONSTANTS
 
 from cdv.util.load_clvm import load_clvm
 from cdv.test import setup as setup_test
-from cdv.test import ContractWrapper
+from cdv.test import ContractWrapper, CoinWrapper
 
 LAUNCHER_MOD = load_clvm("singleton_launcher.clvm", "chia.wallet.puzzles")
 SINGLETON_MOD = load_clvm("singleton_top_layer.clvm", "chia.wallet.puzzles")
@@ -54,6 +54,7 @@ class TestCheckers:
         yield inner_puzzle_code, network, alice, bob
 
     def find_board_in_coin(self,coinrec):
+        appendlog(f'coin {coinrec}')
         puzzle_solution = coinrec.solution.to_program()
 
         appendlog(f'solution {disassemble(puzzle_solution)}')
@@ -246,6 +247,89 @@ class TestCheckers:
 
             appendlog(f'after_first_move {after_first_move} {after_first_move.result} {after_first_move.outputs}')
             assert 'error' in after_first_move.result
+
+        finally:
+            await network.close()
+
+    @pytest.mark.asyncio
+    async def test_can_move_each_player(self, setup):
+        inner_puzzle_code, network, alice, bob = setup
+
+        alice.add_block_callback(self.block_callback(network))
+        await network.farm_block(farmer=alice)
+
+        try:
+            appendlog('test_can_move_each_player')
+            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            assert launched_coin
+
+            move = make_move_sexp(0,2,1,3)
+            maybeMove = SExp.to(move).cons(SExp.to([]))
+
+            simArgs = SExp.to(["simulate", maybeMove, []])
+            cost, result = run_program(
+                launched_coin.puzzle(),
+                simArgs,
+                OPERATOR_LOOKUP
+            )
+
+            appendlog(f'result {disassemble(result)}')
+
+            args = SExp.to([[], maybeMove, [("board", result), ("launcher", launched_coin.name())]])
+            appendlog(f'move is {args}')
+            appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
+            appendlog(f'launched_coin {launched_coin}')
+
+            after_first_move = await alice.spend_coin(
+                launched_coin,
+                push_tx=True,
+                amt=GAME_MOJO,
+                args=args
+            )
+
+            assert 'error' not in after_first_move.result
+            bare_coin = after_first_move.result['additions'][0]
+
+            game_setup = inner_puzzle_code.curry(
+                inner_puzzle_code.get_tree_hash(),
+                launched_coin.name(), # Launcher
+                alice.pk(),
+                bob.pk(),
+                alice.puzzle_hash,
+                bob.puzzle_hash,
+                GAME_MOJO,
+                result,
+            )
+
+            self.coin = CoinWrapper(
+                bare_coin.parent_coin_info,
+                game_setup.get_tree_hash(),
+                GAME_MOJO,
+                game_setup
+            )
+
+            assert self.coin
+            assert self.coin.amount == GAME_MOJO
+
+            move = make_move_sexp(1,5,2,4)
+            appendlog(f'move is {args}')
+            appendlog(f'game_setup {game_setup}')
+
+            maybeMove = SExp.to(move).cons(SExp.to([]))
+
+            simArgs = SExp.to(["simulate", maybeMove, []])
+            cost, result = run_program(
+                game_setup,
+                simArgs,
+                OPERATOR_LOOKUP
+            )
+
+            after_second_move = await bob.spend_coin(
+                self.coin,
+                push_tx=True,
+                amt=GAME_MOJO,
+                args = args)
+
 
         finally:
             await network.close()
