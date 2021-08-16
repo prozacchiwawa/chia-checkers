@@ -357,21 +357,7 @@ class TestCheckers:
             appendlog(f'launcher name {launch_coin.name()}')
             appendlog(f'next board {disassemble(result.rest())}')
 
-            next_game_program = puzzle_hash_of_curried_function(
-                inner_puzzle_code.get_tree_hash(),
-                sha256tree(result.rest()),
-                sha256(ONE, GAME_MOJO),
-                sha256(ONE, bob.puzzle_hash),
-                sha256(ONE, alice.puzzle_hash),
-                sha256(ONE, bob.pk()),
-                sha256(ONE, alice.pk()),
-                sha256(ONE, launch_coin.name()),
-                sha256(ONE, inner_puzzle_code.get_tree_hash())
-            )
-
-            appendlog(f'next_game_program {next_game_program}')
-
-            game_setup = inner_puzzle_code.curry(
+            after_alice_move = inner_puzzle_code.curry(
                 inner_puzzle_code.get_tree_hash(),
                 launch_coin.name(), # Launcher
                 alice.pk(),
@@ -382,30 +368,30 @@ class TestCheckers:
                 result.rest(),
             )
 
-            appendlog(f'computing tree hash of game_setup')
-            appendlog(f'computed via get_tree_hash {game_setup.get_tree_hash()}')
-            appendlog(f'{sha256tree(game_setup)} {disassemble(game_setup)}')
-            appendlog(f'new puzzle {sha256tree(game_setup)} vs {expectedPuzzleHash}')
-            assert expectedPuzzleHash == game_setup.get_tree_hash()
+            appendlog(f'computing tree hash of after_alice_move')
+            appendlog(f'computed via get_tree_hash {after_alice_move.get_tree_hash()}')
+            appendlog(f'{sha256tree(after_alice_move)} {disassemble(after_alice_move)}')
+            appendlog(f'new puzzle {sha256tree(after_alice_move)} vs {expectedPuzzleHash}')
+            assert expectedPuzzleHash == after_alice_move.get_tree_hash()
 
             self.coin = CoinWrapper(
-                bare_coin.name(),
-                bare_coin.puzzle_hash,
+                bare_coin.parent_coin_info,
+                after_alice_move.get_tree_hash(),
                 GAME_MOJO,
-                game_setup
+                after_alice_move
             )
 
             move = make_move_sexp(1,5,2,4)
 
             appendlog(f'simulate bob spend')
             appendlog(f'spend coin {self.coin.name()}')
-            appendlog(f'game_setup {game_setup}')
+            appendlog(f'after_alice_move {after_alice_move}')
 
             maybeMove = SExp.to(move).cons(SExp.to([]))
 
             simArgs = SExp.to(["simulate", maybeMove, []])
             cost, result = run_program(
-                game_setup,
+                after_alice_move,
                 simArgs,
                 OPERATOR_LOOKUP
             )
