@@ -1,18 +1,20 @@
 import pytest
 
+import hashlib
 import os
 import os.path
 import sys
 
 from clvm import SExp
+from clvm.more_ops import op_sha256
 from clvm.operators import OPERATOR_LOOKUP
 from clvm.run_program import run_program
 
 from clvm_tools.binutils import disassemble
-from clvm_tools.sha256tree import sha256tree
 
 from chia.clvm.singleton import SINGLETON_LAUNCHER
 from chia.consensus.default_constants import DEFAULT_CONSTANTS
+from chia.types.blockchain_format.sized_bytes import bytes32
 
 from cdv.util.load_clvm import load_clvm
 from cdv.test import setup as setup_test
@@ -34,6 +36,55 @@ def maskFor(x,y):
 
 def make_move_sexp(fromX,fromY,toX,toY):
     return fromX + (fromY << 8) + (toX << 16) + (toY << 24)
+
+ONE = SExp.to(1)
+TWO = SExp.to(2)
+Q_KW = SExp.to(1)
+A_KW = SExp.to(2)
+C_KW = SExp.to(4)
+
+def sha256(*args):
+    return op_sha256(SExp.to(list(args)))[1]
+
+def sha256tree(s):
+    if s.pair:
+        return sha256(SExp.to(2), sha256tree(s.pair[0]), sha256tree(s.pair[1]))
+    else:
+        return sha256(SExp.to(1), s)
+
+def tree_hash_of_apply(function_hash,environment_hash):
+    return sha256(
+        TWO,
+        sha256(ONE, A_KW),
+        sha256(
+            TWO,
+            sha256(TWO, sha256(ONE, Q_KW), function_hash),
+            sha256(TWO, environment_hash, sha256(ONE, 0))
+        )
+    )
+
+def update_hash_for_parameter_hash(parameter_hash,environment_hash):
+    return sha256(
+        TWO,
+        sha256(ONE, C_KW),
+        sha256(
+            TWO,
+            sha256(TWO, sha256(ONE, Q_KW), parameter_hash),
+            sha256(TWO, environment_hash, sha256(ONE, 0))
+        )
+    )
+
+def build_curry_list(reversed_curry_parameter_hashes,environment_hash):
+    if reversed_curry_parameter_hashes.listp():
+        return build_curry_list(reversed_curry_parameter_hashes.rest(), update_hash_for_parameter_hash(reversed_curry_parameter_hashes.first(), environment_hash))
+    else:
+        return environment_hash
+
+def puzzle_hash_of_curried_function(function_hash,*reversed_curry_parameter_hashes):
+    return tree_hash_of_apply(
+        function_hash,
+        build_curry_list(SExp.to(list(reversed_curry_parameter_hashes)),sha256(ONE,ONE))
+    )
 
 #
 # # A checkers game starts out with a knowable puzzle hash.
@@ -87,12 +138,12 @@ class TestCheckers:
         return cb
 
     async def launch_game(self,inner_puzzle_code,alice,bob):
-        use_coin = await alice.choose_coin(GAME_MOJO)
-        assert use_coin
+        launch_coin = await alice.choose_coin(GAME_MOJO)
+        assert launch_coin
 
         game_setup = inner_puzzle_code.curry(
             inner_puzzle_code.get_tree_hash(),
-            use_coin.name(), # Launcher
+            launch_coin.name(), # Launcher
             alice.pk(),
             bob.pk(),
             alice.puzzle_hash,
@@ -102,12 +153,15 @@ class TestCheckers:
         )
 
         appendlog(f'game_setup {game_setup}')
+        appendlog(f'launch_coin name {launch_coin.name()}')
 
-        return await alice.launch_smart_coin(
+        result_coin = await alice.launch_smart_coin(
             game_setup,
             amt=GAME_MOJO,
-            launcher=use_coin
+            launcher=launch_coin
         )
+
+        return launch_coin, result_coin
 
     # Code cribs a lot from pools code in chia-blockchain, also Quexington's
     # example piggy bank.
@@ -118,7 +172,7 @@ class TestCheckers:
         await network.farm_block(farmer=alice)
 
         try:
-            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
         finally:
@@ -135,13 +189,14 @@ class TestCheckers:
 
         try:
             appendlog('test_can_move')
-            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
             move = make_move_sexp(0,2,1,3)
             maybeMove = SExp.to(move).cons(SExp.to([]))
 
             simArgs = SExp.to(["simulate", maybeMove, []])
+            appendlog(f'move is {simArgs}')
             cost, result = run_program(
                 launched_coin.puzzle(),
                 simArgs,
@@ -150,7 +205,7 @@ class TestCheckers:
 
             appendlog(f'result {disassemble(result)}')
 
-            args = SExp.to([[], maybeMove, [("board", result), ("launcher", launched_coin.name())]])
+            args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
             appendlog(f'move is {args}')
             appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
             appendlog(f'launched_coin {launched_coin}')
@@ -178,7 +233,7 @@ class TestCheckers:
 
         try:
             appendlog('test_can_move')
-            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
             move = make_move_sexp(0,2,1,4)
@@ -190,7 +245,7 @@ class TestCheckers:
             black_move = black_start ^ source_mask ^ target_mask
             fake_board = SExp.to([1, 0, 0xa040a040a040a040, black_move])
 
-            args = SExp.to([[], maybeMove, [("board", sha256tree(fake_board)), ("launcher", launched_coin.name())]])
+            args = SExp.to([[], maybeMove, [("board", fake_board), ("launcher", launched_coin.name())]])
             appendlog(f'move is {args}')
             appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
             appendlog(f'launched_coin {launched_coin}')
@@ -218,7 +273,7 @@ class TestCheckers:
 
         try:
             appendlog('test_can_move')
-            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
             move = make_move_sexp(0,2,1,3)
@@ -260,13 +315,15 @@ class TestCheckers:
 
         try:
             appendlog('test_can_move_each_player')
-            launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            launch_coin, launched_coin = \
+                await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
             move = make_move_sexp(0,2,1,3)
             maybeMove = SExp.to(move).cons(SExp.to([]))
 
             simArgs = SExp.to(["simulate", maybeMove, []])
+            appendlog(f'alice sim')
             cost, result = run_program(
                 launched_coin.puzzle(),
                 simArgs,
@@ -275,11 +332,13 @@ class TestCheckers:
 
             appendlog(f'result {disassemble(result)}')
 
-            args = SExp.to([[], maybeMove, [("board", result), ("launcher", launched_coin.name())]])
+            expectedPuzzleHash = bytes32(result.first().as_python())
+            args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
             appendlog(f'move is {args}')
             appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
             appendlog(f'launched_coin {launched_coin}')
 
+            appendlog(f'alice spend')
             after_first_move = await alice.spend_coin(
                 launched_coin,
                 push_tx=True,
@@ -289,30 +348,57 @@ class TestCheckers:
 
             assert 'error' not in after_first_move.result
             bare_coin = after_first_move.result['additions'][0]
+            appendlog(f'bare_coin.puzzle_hash {bare_coin.puzzle_hash}')
+            assert bare_coin.puzzle_hash == expectedPuzzleHash
+
+            for coin in after_first_move.result['additions']:
+                appendlog(f'add coin {coin.name()}')
+
+            appendlog(f'launcher name {launch_coin.name()}')
+            appendlog(f'next board {disassemble(result.rest())}')
+
+            next_game_program = puzzle_hash_of_curried_function(
+                inner_puzzle_code.get_tree_hash(),
+                sha256tree(result.rest()),
+                sha256(ONE, GAME_MOJO),
+                sha256(ONE, bob.puzzle_hash),
+                sha256(ONE, alice.puzzle_hash),
+                sha256(ONE, bob.pk()),
+                sha256(ONE, alice.pk()),
+                sha256(ONE, launch_coin.name()),
+                sha256(ONE, inner_puzzle_code.get_tree_hash())
+            )
+
+            appendlog(f'next_game_program {next_game_program}')
 
             game_setup = inner_puzzle_code.curry(
                 inner_puzzle_code.get_tree_hash(),
-                launched_coin.name(), # Launcher
+                launch_coin.name(), # Launcher
                 alice.pk(),
                 bob.pk(),
                 alice.puzzle_hash,
                 bob.puzzle_hash,
                 GAME_MOJO,
-                result,
+                result.rest(),
             )
 
+            appendlog(f'computing tree hash of game_setup')
+            appendlog(f'computed via get_tree_hash {game_setup.get_tree_hash()}')
+            appendlog(f'{sha256tree(game_setup)} {disassemble(game_setup)}')
+            appendlog(f'new puzzle {sha256tree(game_setup)} vs {expectedPuzzleHash}')
+            assert expectedPuzzleHash == game_setup.get_tree_hash()
+
             self.coin = CoinWrapper(
-                bare_coin.parent_coin_info,
-                game_setup.get_tree_hash(),
+                bare_coin.name(),
+                bare_coin.puzzle_hash,
                 GAME_MOJO,
                 game_setup
             )
 
-            assert self.coin
-            assert self.coin.amount == GAME_MOJO
-
             move = make_move_sexp(1,5,2,4)
-            appendlog(f'move is {args}')
+
+            appendlog(f'simulate bob spend')
+            appendlog(f'spend coin {self.coin.name()}')
             appendlog(f'game_setup {game_setup}')
 
             maybeMove = SExp.to(move).cons(SExp.to([]))
@@ -324,12 +410,18 @@ class TestCheckers:
                 OPERATOR_LOOKUP
             )
 
+            args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
+            appendlog(f'move is {args}')
+            appendlog(f'self.coin {self.coin.name()} data {self.coin}')
+
+            appendlog(f'do bob spend')
             after_second_move = await bob.spend_coin(
                 self.coin,
                 push_tx=True,
                 amt=GAME_MOJO,
                 args = args)
 
+            assert 'error' not in after_second_move.result
 
         finally:
             await network.close()

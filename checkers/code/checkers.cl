@@ -443,6 +443,20 @@
     (defun move1 (mB) (if mB (fromJust mB) (x "invalid move")))
     (defun move (m b) (move1 (move2 m b)))
 
+    (defun computeNextPuzzleHash (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
+      (puzzle-hash-of-curried-function
+       BASE_INNER_PUZZLE_HASH
+       (sha256tree b)
+       (sha256 ONE AMT)
+       (sha256 ONE P2_PH)
+       (sha256 ONE P1_PH)
+       (sha256 ONE P2_PK)
+       (sha256 ONE P1_PK)
+       (sha256 ONE LAUNCHER)
+       (sha256 ONE BASE_INNER_PUZZLE_HASH)
+       )
+      )
+
     ; Return the conditions this layer requires.
     (defun makeMove (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT mM b)
       (list
@@ -452,19 +466,10 @@
              )
 
        (list CREATE_COIN
-            (puzzle-hash-of-curried-function
-             BASE_INNER_PUZZLE_HASH
-             LAUNCHER
-             (sha256tree b)
-             (sha256 AMT)
-             (sha256 P2_PH)
-             (sha256 P1_PH)
-             (sha256 P2_PK)
-             (sha256 P1_PK)
-             (sha256 BASE_INNER_PUZZLE_HASH)
+             (computeNextPuzzleHash
+              BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
+             AMT
              )
-            AMT
-            )
        )
       )
 
@@ -511,26 +516,34 @@
         )
       )
 
+    (defun simulationResponse (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
+      (c
+       (computeNextPuzzleHash
+        BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
+       b
+       )
+      )
+
     ; If a move is chosen, makeMove will return a new coin unless
     ; fromJust will throw if move didn't return a board, indicating that
     ; the move wasn't valid.
     (label "main"
            (if m
                (if (= d1 "simulate")
-                   (move (toMove (fromJust m)) BOARD)
+                   (simulationResponse BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT (move (toMove (fromJust m)) BOARD))
 
-                   (makeMove
-                    BASE_INNER_PUZZLE_HASH
-                    LAUNCHER
-                    P1_PK
-                    P2_PK
-                    P1_PH
-                    P2_PH
-                    AMT
-                    m ;; move as the parent signs this as an argument.
-                    (validateInputs LAUNCHER (move (toMove (fromJust m)) BOARD) extra)
-                    )
-                   )
+                 (makeMove
+                  BASE_INNER_PUZZLE_HASH
+                  LAUNCHER
+                  P1_PK
+                  P2_PK
+                  P1_PH
+                  P2_PH
+                  AMT
+                  m ;; move as the parent signs this as an argument.
+                  (validateInputs LAUNCHER (move (toMove (fromJust m)) BOARD) extra)
+                  )
+                 )
 
              (if (availableMoves BOARD)
                  (x "not a win yet")
