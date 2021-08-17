@@ -18,7 +18,7 @@ from chia.types.blockchain_format.sized_bytes import bytes32
 
 from cdv.util.load_clvm import load_clvm
 from cdv.test import setup as setup_test
-from cdv.test import ContractWrapper, CoinWrapper
+from cdv.test import CoinWrapper
 
 GAME_MOJO = 1 # 1 mojo
 INITIAL_BOARD = SExp.to([1, 0, 0xa040a040a040a040, 0x205020502050205])
@@ -68,6 +68,9 @@ class TestCheckers:
         inner_puzzle_code = load_clvm("checkers.cl", "checkers.code")
 
         network, alice, bob = await setup_test()
+
+        # Whole network value
+        await network.farm_block()
 
         self.game_state = INITIAL_BOARD
 
