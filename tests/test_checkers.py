@@ -32,55 +32,6 @@ def maskFor(x,y):
 def make_move_sexp(fromX,fromY,toX,toY):
     return fromX + (fromY << 8) + (toX << 16) + (toY << 24)
 
-ONE = SExp.to(1)
-TWO = SExp.to(2)
-Q_KW = SExp.to(1)
-A_KW = SExp.to(2)
-C_KW = SExp.to(4)
-
-def sha256(*args):
-    return op_sha256(SExp.to(list(args)))[1]
-
-def sha256tree(s):
-    if s.pair:
-        return sha256(SExp.to(2), sha256tree(s.pair[0]), sha256tree(s.pair[1]))
-    else:
-        return sha256(SExp.to(1), s)
-
-def tree_hash_of_apply(function_hash,environment_hash):
-    return sha256(
-        TWO,
-        sha256(ONE, A_KW),
-        sha256(
-            TWO,
-            sha256(TWO, sha256(ONE, Q_KW), function_hash),
-            sha256(TWO, environment_hash, sha256(ONE, 0))
-        )
-    )
-
-def update_hash_for_parameter_hash(parameter_hash,environment_hash):
-    return sha256(
-        TWO,
-        sha256(ONE, C_KW),
-        sha256(
-            TWO,
-            sha256(TWO, sha256(ONE, Q_KW), parameter_hash),
-            sha256(TWO, environment_hash, sha256(ONE, 0))
-        )
-    )
-
-def build_curry_list(reversed_curry_parameter_hashes,environment_hash):
-    if reversed_curry_parameter_hashes.listp():
-        return build_curry_list(reversed_curry_parameter_hashes.rest(), update_hash_for_parameter_hash(reversed_curry_parameter_hashes.first(), environment_hash))
-    else:
-        return environment_hash
-
-def puzzle_hash_of_curried_function(function_hash,*reversed_curry_parameter_hashes):
-    return tree_hash_of_apply(
-        function_hash,
-        build_curry_list(SExp.to(list(reversed_curry_parameter_hashes)),sha256(ONE,ONE))
-    )
-
 #
 # # A checkers game starts out with a knowable puzzle hash.
 # Knowing the parent coin and amount allows us to identify it.
