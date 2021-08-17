@@ -1,12 +1,15 @@
 import pytest
 
-import hashlib
+import io
 import os
 import os.path
 import sys
 
-from clvm import SExp
-from clvm.more_ops import op_sha256
+from binascii import unhexlify
+
+from clvm import SExp, to_sexp_f
+from clvm.casts import int_from_bytes
+from clvm.serialize import sexp_from_stream
 from clvm.operators import OPERATOR_LOOKUP
 from clvm.run_program import run_program
 
@@ -21,13 +24,184 @@ from cdv.test import setup as setup_test
 from cdv.test import CoinWrapper
 
 GAME_MOJO = 1 # 1 mojo
-INITIAL_BOARD = SExp.to([1, 0, 0xa040a040a040a040, 0x205020502050205])
+INITIAL_BOARD_PYTHON = [1, 0, 0xa040a040a040a040, 0x205020502050205]
+INITIAL_BOARD = SExp.to(INITIAL_BOARD_PYTHON)
 
 def maskFor(x,y):
     return 1 << ((8 * x) + y)
 
+def presentMask(bytesData,x,y):
+    return int_from_bytes(bytesData) & maskFor(x,y)
+
 def make_move_sexp(fromX,fromY,toX,toY):
     return fromX + (fromY << 8) + (toX << 16) + (toY << 24)
+
+def appendlog(s):
+    with open('test.log','a') as f:
+        f.write(f'{s}\n')
+
+class CheckersMover:
+    def __init__(self,inner_puzzle_code,player_black,player_red):
+        self.inner_puzzle_code = inner_puzzle_code
+        self.known_height = 1
+        self.black = player_black
+        self.red = player_red
+        self.launch_coin = None
+        self.first_coin = None
+        self.current_coin = None
+        self.board = INITIAL_BOARD_PYTHON
+
+    async def launch_game(self,launch_coin):
+        game_setup = self.inner_puzzle_code.curry(
+            self.inner_puzzle_code.get_tree_hash(),
+            launch_coin.name(), # Launcher
+            self.black.pk(),
+            self.red.pk(),
+            self.black.puzzle_hash,
+            self.red.puzzle_hash,
+            GAME_MOJO,
+            INITIAL_BOARD
+        )
+
+        result_coin = await self.black.launch_smart_coin(
+            game_setup,
+            amt=GAME_MOJO,
+            launcher=launch_coin
+        )
+
+        self.launch_coin = launch_coin
+        self.first_coin = result_coin
+        self.current_coin = result_coin
+
+        return launch_coin, result_coin
+
+    def get_board(self):
+        return {
+            'blackmove': self.board[0] != b'',
+            'king': self.board[1],
+            'red': self.board[2],
+            'black': self.board[3]
+        }
+
+    def get_next_mover(self):
+        if self.board[0] != b'':
+            return self.black
+        else:
+            return self.red
+
+    async def make_move(self,fromX,fromY,toX,toY):
+        move = make_move_sexp(fromX,fromY,toX,toY)
+        maybeMove = SExp.to(move).cons(SExp.to([]))
+
+        current_puzzle = self.inner_puzzle_code.curry(
+            self.inner_puzzle_code.get_tree_hash(),
+            self.launch_coin.name(), # Launcher
+            self.black.pk(),
+            self.red.pk(),
+            self.black.puzzle_hash,
+            self.red.puzzle_hash,
+            GAME_MOJO,
+            SExp.to(self.board)
+        )
+
+        simArgs = SExp.to(["simulate", maybeMove, []])
+        cost, result = run_program(
+            current_puzzle,
+            simArgs,
+            OPERATOR_LOOKUP
+        )
+
+        if self.current_coin is not self.first_coin:
+            assert current_puzzle.get_tree_hash() == self.current_coin.puzzle_hash
+
+        expectedPuzzleHash = bytes32(result.first().as_python())
+        after_move_puzzle = self.inner_puzzle_code.curry(
+            self.inner_puzzle_code.get_tree_hash(),
+            self.launch_coin.name(), # Launcher
+            self.black.pk(),
+            self.red.pk(),
+            self.black.puzzle_hash,
+            self.red.puzzle_hash,
+            GAME_MOJO,
+            result.rest(),
+        )
+        assert after_move_puzzle.get_tree_hash() == expectedPuzzleHash
+
+        player_to_move = self.get_next_mover()
+        moveTail = [
+            ("board", result.rest()),
+            ("launcher", self.launch_coin.name())
+        ]
+        args = SExp.to([[], maybeMove, moveTail])
+        after_move_txn = await player_to_move.spend_coin(
+            self.current_coin,
+            push_tx=True,
+            amt=GAME_MOJO,
+            args=args
+        )
+
+        assert 'error' not in after_move_txn.result
+        bare_coin = after_move_txn.result['additions'][0]
+
+        self.current_coin = CoinWrapper(
+            bare_coin.parent_coin_info,
+            after_move_puzzle.get_tree_hash(),
+            GAME_MOJO,
+            after_move_puzzle
+        )
+
+        assert self.current_coin.puzzle_hash == expectedPuzzleHash
+        return self.current_coin
+
+    def take_new_block(self,block):
+        while block.listp():
+            thistx = block.first()
+            block = block.rest()
+
+            while thistx.listp():
+                thisspend = thistx.first()
+                thistx = thistx.rest()
+
+                appendlog(f'current coin {self.current_coin.name()}')
+                appendlog(f'spend {disassemble(thisspend)}')
+
+                retrieved_program_args = thisspend.rest().rest().rest().first()
+                kv_pairs = retrieved_program_args.rest().rest().first()
+
+                board = None
+                launcher = None
+
+                appendlog(f'kv_pairs {disassemble(kv_pairs)}')
+                for p in kv_pairs.as_python():
+                    if p[0] == b'launcher':
+                        launcher = p[1]
+                    elif p[0] == b'board':
+                        board = p[1:]
+
+                if board and launcher and launcher == self.launch_coin.name():
+                    self.board = board
+                    appendlog(f'new board {self.board}')
+
+    async def absorb_state(self,network):
+        height = network.get_height()
+        raw_blockdata = await network.get_all_block(self.known_height, height + 1)
+
+        for b in raw_blockdata:
+            self.known_height += 1
+            appendlog(f'block height {self.known_height}')
+
+            txgen = b.transactions_generator
+            if not txgen:
+                continue
+
+            appendlog(f'txgen {txgen}')
+
+            blockdata = run_program(
+                sexp_from_stream(io.BytesIO(unhexlify(str(txgen.program))), to_sexp_f),
+                SExp.to(txgen.generator_args),
+                OPERATOR_LOOKUP
+            )[1]
+            self.take_new_block(blockdata)
 
 #
 # Theory of operation:
@@ -76,29 +250,6 @@ class TestCheckers:
 
         yield inner_puzzle_code, network, alice, bob
 
-    async def launch_game(self,inner_puzzle_code,alice,bob):
-        launch_coin = await alice.choose_coin(GAME_MOJO)
-        assert launch_coin
-
-        game_setup = inner_puzzle_code.curry(
-            inner_puzzle_code.get_tree_hash(),
-            launch_coin.name(), # Launcher
-            alice.pk(),
-            bob.pk(),
-            alice.puzzle_hash,
-            bob.puzzle_hash,
-            GAME_MOJO,
-            INITIAL_BOARD
-        )
-
-        result_coin = await alice.launch_smart_coin(
-            game_setup,
-            amt=GAME_MOJO,
-            launcher=launch_coin
-        )
-
-        return launch_coin, result_coin
-
     # Code cribs a lot from pools code in chia-blockchain, also Quexington's
     # example piggy bank.
     @pytest.mark.asyncio
@@ -108,7 +259,9 @@ class TestCheckers:
         await network.farm_block(farmer=alice)
 
         try:
-            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            mover = CheckersMover(inner_puzzle_code, alice, bob)
+            launch_coin = await alice.choose_coin(GAME_MOJO)
+            _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
 
         finally:
@@ -123,7 +276,9 @@ class TestCheckers:
         await network.farm_block(farmer=alice)
 
         try:
-            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            mover = CheckersMover(inner_puzzle_code, alice, bob)
+            launch_coin = await alice.choose_coin(GAME_MOJO)
+            _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
 
             move = make_move_sexp(0,2,1,3)
@@ -157,7 +312,9 @@ class TestCheckers:
         await network.farm_block(farmer=alice)
 
         try:
-            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            mover = CheckersMover(inner_puzzle_code, alice, bob)
+            launch_coin = await alice.choose_coin(GAME_MOJO)
+            _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
 
             move = make_move_sexp(0,2,1,4)
@@ -190,7 +347,9 @@ class TestCheckers:
         await network.farm_block(farmer=alice)
 
         try:
-            _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
+            mover = CheckersMover(inner_puzzle_code, alice, bob)
+            launch_coin = await alice.choose_coin(GAME_MOJO)
+            _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
 
             move = make_move_sexp(0,2,1,3)
@@ -223,71 +382,26 @@ class TestCheckers:
         await network.farm_block(farmer=alice)
 
         try:
-            launch_coin, launched_coin = \
-                await self.launch_game(inner_puzzle_code,alice,bob)
+            runner = CheckersMover(inner_puzzle_code, alice, bob)
+            launch_coin = await alice.choose_coin(GAME_MOJO)
+            launch_coin, launched_coin = await runner.launch_game(launch_coin)
             assert launched_coin
 
-            move = make_move_sexp(0,2,1,3)
-            maybeMove = SExp.to(move).cons(SExp.to([]))
+            bare_coin = await runner.make_move(0,2,1,3)
+            assert bare_coin
 
-            simArgs = SExp.to(["simulate", maybeMove, []])
-            cost, result = run_program(
-                launched_coin.puzzle(),
-                simArgs,
-                OPERATOR_LOOKUP
-            )
+            await runner.absorb_state(network)
+            board = runner.get_board()
+            assert not presentMask(board['black'], 0,2)
+            assert presentMask(board['black'], 1,3)
 
-            expectedPuzzleHash = bytes32(result.first().as_python())
-            args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
-            after_first_move = await alice.spend_coin(
-                launched_coin,
-                push_tx=True,
-                amt=GAME_MOJO,
-                args=args
-            )
+            bare_coin = await runner.make_move(1,5,2,4)
+            assert bare_coin
 
-            assert 'error' not in after_first_move.result
-            bare_coin = after_first_move.result['additions'][0]
-            assert bare_coin.puzzle_hash == expectedPuzzleHash
-
-            after_alice_move = inner_puzzle_code.curry(
-                inner_puzzle_code.get_tree_hash(),
-                launch_coin.name(), # Launcher
-                alice.pk(),
-                bob.pk(),
-                alice.puzzle_hash,
-                bob.puzzle_hash,
-                GAME_MOJO,
-                result.rest(),
-            )
-
-            assert expectedPuzzleHash == after_alice_move.get_tree_hash()
-
-            self.coin = CoinWrapper(
-                bare_coin.parent_coin_info,
-                after_alice_move.get_tree_hash(),
-                GAME_MOJO,
-                after_alice_move
-            )
-
-            move = make_move_sexp(1,5,2,4)
-            maybeMove = SExp.to(move).cons(SExp.to([]))
-
-            simArgs = SExp.to(["simulate", maybeMove, []])
-            cost, result = run_program(
-                after_alice_move,
-                simArgs,
-                OPERATOR_LOOKUP
-            )
-
-            args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
-            after_second_move = await bob.spend_coin(
-                self.coin,
-                push_tx=True,
-                amt=GAME_MOJO,
-                args = args)
-
-            assert 'error' not in after_second_move.result
+            await runner.absorb_state(network)
+            board = runner.get_board()
+            assert not presentMask(board['red'], 1,5)
+            assert presentMask(board['red'], 2,4)
 
         finally:
             await network.close()
