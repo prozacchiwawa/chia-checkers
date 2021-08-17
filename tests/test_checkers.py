@@ -26,11 +26,6 @@ SINGLETON_MOD = load_clvm("singleton_top_layer.clvm", "chia.wallet.puzzles")
 GAME_MOJO = 1 # 1 mojo
 INITIAL_BOARD = SExp.to([1, 0, 0xa040a040a040a040, 0x205020502050205])
 
-def appendlog(s):
-    with open('test.log','a') as f:
-        f.write(s)
-        f.write('\n')
-
 def maskFor(x,y):
     return 1 << ((8 * x) + y)
 
@@ -104,39 +99,6 @@ class TestCheckers:
 
         yield inner_puzzle_code, network, alice, bob
 
-    def find_board_in_coin(self,coinrec):
-        appendlog(f'coin {coinrec}')
-        puzzle_solution = coinrec.solution.to_program()
-
-        appendlog(f'solution {disassemble(puzzle_solution)}')
-
-        extra_data_list = puzzle_solution.rest().rest().first()
-
-        while not extra_data_list.nullp():
-            ed_pair = extra_data_list.first()
-            extra_data_list = extra_data_list.rest()
-
-            ed_key = ed_pair.first()
-            ed_value = ed_pair.rest()
-
-            appendlog(f'k = {ed_key} v = {ed_value}')
-
-            #puzzle_program = coinrec.puzzle_reveal.to_program()
-            #cost, result = run_program(
-            #    puzzle_program,
-            #    puzzle_solution,
-            #    OPERATOR_LOOKUP
-            #)
-
-    def block_callback(self,network):
-        async def cb(height,block,additions,removals):
-            for a in additions:
-                coinrec = await network.get_puzzle_and_solution(a.name, height)
-                if coinrec:
-                    board = self.find_board_in_coin(coinrec)
-
-        return cb
-
     async def launch_game(self,inner_puzzle_code,alice,bob):
         launch_coin = await alice.choose_coin(GAME_MOJO)
         assert launch_coin
@@ -151,9 +113,6 @@ class TestCheckers:
             GAME_MOJO,
             INITIAL_BOARD
         )
-
-        appendlog(f'game_setup {game_setup}')
-        appendlog(f'launch_coin name {launch_coin.name()}')
 
         result_coin = await alice.launch_smart_coin(
             game_setup,
@@ -184,11 +143,9 @@ class TestCheckers:
     async def test_can_move(self, setup):
         inner_puzzle_code, network, alice, bob = setup
 
-        alice.add_block_callback(self.block_callback(network))
         await network.farm_block(farmer=alice)
 
         try:
-            appendlog('test_can_move')
             _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
@@ -196,20 +153,13 @@ class TestCheckers:
             maybeMove = SExp.to(move).cons(SExp.to([]))
 
             simArgs = SExp.to(["simulate", maybeMove, []])
-            appendlog(f'move is {simArgs}')
             cost, result = run_program(
                 launched_coin.puzzle(),
                 simArgs,
                 OPERATOR_LOOKUP
             )
 
-            appendlog(f'result {disassemble(result)}')
-
             args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
-            appendlog(f'move is {args}')
-            appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
-            appendlog(f'launched_coin {launched_coin}')
-
             after_first_move = await alice.spend_coin(
                 launched_coin,
                 push_tx=True,
@@ -217,7 +167,6 @@ class TestCheckers:
                 args=args
             )
 
-            appendlog(f'after_first_move {after_first_move} {after_first_move.result} {after_first_move.outputs}')
             assert 'error' not in after_first_move.result
 
         finally:
@@ -228,11 +177,9 @@ class TestCheckers:
     async def test_cant_make_invalid_move(self, setup):
         inner_puzzle_code, network, alice, bob = setup
 
-        alice.add_block_callback(self.block_callback(network))
         await network.farm_block(farmer=alice)
 
         try:
-            appendlog('test_can_move')
             _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
@@ -246,10 +193,6 @@ class TestCheckers:
             fake_board = SExp.to([1, 0, 0xa040a040a040a040, black_move])
 
             args = SExp.to([[], maybeMove, [("board", fake_board), ("launcher", launched_coin.name())]])
-            appendlog(f'move is {args}')
-            appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
-            appendlog(f'launched_coin {launched_coin}')
-
             after_first_move = await bob.spend_coin(
                 launched_coin,
                 push_tx=True,
@@ -257,7 +200,6 @@ class TestCheckers:
                 args=args
             )
 
-            appendlog(f'after_first_move {after_first_move} {after_first_move.result} {after_first_move.outputs}')
             assert 'error' in after_first_move.result
 
         finally:
@@ -268,11 +210,9 @@ class TestCheckers:
     async def test_wrong_person_cant_move(self, setup):
         inner_puzzle_code, network, alice, bob = setup
 
-        alice.add_block_callback(self.block_callback(network))
         await network.farm_block(farmer=alice)
 
         try:
-            appendlog('test_can_move')
             _, launched_coin = await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
 
@@ -286,13 +226,7 @@ class TestCheckers:
                 OPERATOR_LOOKUP
             )
 
-            appendlog(f'result {disassemble(result)}')
-
             args = SExp.to([[], maybeMove, [("board", result.get_tree_hash()), ("launcher", launched_coin.name())]])
-            appendlog(f'move is {args}')
-            appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
-            appendlog(f'launched_coin {launched_coin}')
-
             after_first_move = await bob.spend_coin(
                 launched_coin,
                 push_tx=True,
@@ -300,7 +234,6 @@ class TestCheckers:
                 args=args
             )
 
-            appendlog(f'after_first_move {after_first_move} {after_first_move.result} {after_first_move.outputs}')
             assert 'error' in after_first_move.result
 
         finally:
@@ -310,11 +243,9 @@ class TestCheckers:
     async def test_can_move_each_player(self, setup):
         inner_puzzle_code, network, alice, bob = setup
 
-        alice.add_block_callback(self.block_callback(network))
         await network.farm_block(farmer=alice)
 
         try:
-            appendlog('test_can_move_each_player')
             launch_coin, launched_coin = \
                 await self.launch_game(inner_puzzle_code,alice,bob)
             assert launched_coin
@@ -323,22 +254,14 @@ class TestCheckers:
             maybeMove = SExp.to(move).cons(SExp.to([]))
 
             simArgs = SExp.to(["simulate", maybeMove, []])
-            appendlog(f'alice sim')
             cost, result = run_program(
                 launched_coin.puzzle(),
                 simArgs,
                 OPERATOR_LOOKUP
             )
 
-            appendlog(f'result {disassemble(result)}')
-
             expectedPuzzleHash = bytes32(result.first().as_python())
             args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
-            appendlog(f'move is {args}')
-            appendlog(f'puzzle is {disassemble(launched_coin.puzzle())}')
-            appendlog(f'launched_coin {launched_coin}')
-
-            appendlog(f'alice spend')
             after_first_move = await alice.spend_coin(
                 launched_coin,
                 push_tx=True,
@@ -348,14 +271,7 @@ class TestCheckers:
 
             assert 'error' not in after_first_move.result
             bare_coin = after_first_move.result['additions'][0]
-            appendlog(f'bare_coin.puzzle_hash {bare_coin.puzzle_hash}')
             assert bare_coin.puzzle_hash == expectedPuzzleHash
-
-            for coin in after_first_move.result['additions']:
-                appendlog(f'add coin {coin.name()}')
-
-            appendlog(f'launcher name {launch_coin.name()}')
-            appendlog(f'next board {disassemble(result.rest())}')
 
             after_alice_move = inner_puzzle_code.curry(
                 inner_puzzle_code.get_tree_hash(),
@@ -368,10 +284,6 @@ class TestCheckers:
                 result.rest(),
             )
 
-            appendlog(f'computing tree hash of after_alice_move')
-            appendlog(f'computed via get_tree_hash {after_alice_move.get_tree_hash()}')
-            appendlog(f'{sha256tree(after_alice_move)} {disassemble(after_alice_move)}')
-            appendlog(f'new puzzle {sha256tree(after_alice_move)} vs {expectedPuzzleHash}')
             assert expectedPuzzleHash == after_alice_move.get_tree_hash()
 
             self.coin = CoinWrapper(
@@ -382,11 +294,6 @@ class TestCheckers:
             )
 
             move = make_move_sexp(1,5,2,4)
-
-            appendlog(f'simulate bob spend')
-            appendlog(f'spend coin {self.coin.name()}')
-            appendlog(f'after_alice_move {after_alice_move}')
-
             maybeMove = SExp.to(move).cons(SExp.to([]))
 
             simArgs = SExp.to(["simulate", maybeMove, []])
@@ -397,10 +304,6 @@ class TestCheckers:
             )
 
             args = SExp.to([[], maybeMove, [("board", result.rest()), ("launcher", launched_coin.name())]])
-            appendlog(f'move is {args}')
-            appendlog(f'self.coin {self.coin.name()} data {self.coin}')
-
-            appendlog(f'do bob spend')
             after_second_move = await bob.spend_coin(
                 self.coin,
                 push_tx=True,
