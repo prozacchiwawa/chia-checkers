@@ -30,12 +30,6 @@ def make_move_sexp(fromX,fromY,toX,toY):
     return fromX + (fromY << 8) + (toX << 16) + (toY << 24)
 
 #
-# # A checkers game starts out with a knowable puzzle hash.
-# Knowing the parent coin and amount allows us to identify it.
-#
-# It incorporates a currying of fixed parameters and the board, leaving just
-# a move as a usable parameter for the solution.
-#
 # Theory of operation:
 #
 # This contract creates a playable game of checkers which carries some attributes
