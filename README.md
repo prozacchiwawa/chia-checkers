@@ -15,9 +15,8 @@ The game uses a board state like this:
 
 ```(black-to-move king-mask red-mask black-mask)```
 
-Where black-to-move is treated as boolean and the rest are integers in the form:
-
-```1 << ((8 * x) + y)```
+Where black-to-move is treated as boolean and the rest are integers where each bit
+`1 << ((8 * x) + y)` represents that the mask contains a true value at (`x`,`y`).
 
 And it is curried in at each stage.  The copy in the third parameter, which
 as I understand things is intended to be an alist containing data we want to
