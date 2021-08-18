@@ -1,0 +1,13 @@
+(
+ (defun abs (s) (if (> s 0) s (- 0 s)))
+
+ (defun moddiv1 (res) (c (r res) (f res)))
+ (defun moddiv (n d) (moddiv1 (divmod n d)))
+
+ (defun maskFor (pt) (lsh 1 (+ (* 8 (f pt)) (r pt))))
+
+ (defun manhattanDistance (m) (abs (- (m$fromX m) (m$toX m))))
+
+ (defun direction1 (fromX fromY toX toY) (c (- toX fromX) (- toY fromY)))
+ (defun direction (m) (c (- (m$toX m) (m$fromX m)) (- (m$toY m) (m$fromY m))))
+ )

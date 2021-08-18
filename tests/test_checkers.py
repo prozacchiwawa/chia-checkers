@@ -67,7 +67,7 @@ def presentMask(bytesData,x,y):
 class TestCheckers:
     @pytest.fixture(scope="function")
     async def setup(self):
-        inner_puzzle_code = load_clvm("checkers.cl", "checkers.code")
+        inner_puzzle_code = load_clvm("checkers.cl", "checkers.code", search_paths=["checkers/code"])
 
         network, alice, bob = await setup_test()
 

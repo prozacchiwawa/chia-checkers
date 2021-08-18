@@ -1,0 +1,67 @@
+(
+ (defun jumpState$sEqSteps (js) (f js))
+ (defun jumpState$sMod2Eq0 (js) (f (r js)))
+ (defun jumpState$theChecker (js) (f (r (r js))))
+ (defun jumpState$otherColor (js) (f (r (r (r js)))))
+ (defun jumpAtCoords0 (fromX fromY dx dy steps s)
+   (c (+ fromX (* s (/ dx steps))) (+ fromY (* s (/ dy steps)))))
+
+ (defun jumpAtCoords (fromX fromY dir steps s)
+   (jumpAtCoords0 fromX fromY (f dir) (r dir) steps s))
+
+ (defun newJumpState2 (oc sEqSteps sMod2Eq0 theChecker)
+   (list
+    sEqSteps
+    sMod2Eq0
+    theChecker
+    (= (colorOfMaybeChecker theChecker) (just oc))))
+
+ (defun newJumpState1 (oc steps jcoord b s)
+   (newJumpState2 oc (= steps s) (not (r (divmod s 2))) (checkerAt jcoord b)))
+
+ (defun newJumpState (oc steps m b s)
+   (newJumpState1
+    oc
+    steps
+    (jumpAtCoords (m$fromX m) (m$fromY m) (direction m) steps s) b s))
+
+ (defun jumpsNextStep (steps color m b a s js)
+   (if (label "true true None _" (* (* (jumpState$sEqSteps js) (jumpState$sMod2Eq0 js)) (not (jumpState$theChecker js))))
+       (just a)
+     (if (label "_ true Some _" (* (jumpState$sMod2Eq0 js) (not (not (jumpState$theChecker js)))))
+         ()
+       (if (label "_ false _ true" (* (not (jumpState$sMod2Eq0 js)) (jumpState$otherColor js)))
+           (nextJump1 steps color m b (c (jumpAtCoords (m$fromX m) (m$fromY m) (direction m) steps s) a) (+ s 1))
+         (if (label "_ true None _" (* (not (jumpState$sMod2Eq0 js)) (jumpState$otherColor js)))
+             (nextJump1 steps color m b a (+ s 1))
+           ()
+           )
+         )
+       )
+     )
+   )
+
+ (defun nextJump1 (steps color m b a s)
+   (jumpsNextStep
+    steps color m b a s (newJumpState (otherColor color) steps m b s)))
+
+ (defun jumps (color m b) (nextJump1 (manhattanDistance m) color m b () 1))
+
+ (defun availableJumps2 (a s color dx dy x y b atX atY jlist)
+   (availableJumps (if jlist (c (c atX atY) a) a) (+ s 2) color dx dy x y b))
+
+ (defun availableJumps1 (a s color dx dy x y b atX atY)
+   (if (inBounds atX atY)
+       (availableJumps2
+        a s color dx dy x y b atX atY
+        (jumps color (c (c x y) (c atX atY)) b))
+     a
+     )
+   )
+
+ (defun availableJumps (a s color dx dy x y b)
+   (availableJumps1 a s color dx dy x y b (+ x (* s dx)) (+ y (* s dy))))
+
+ (defun allowedJumps (color pt b l)
+   (please_append_my_lists_i_promise_i_wont_use_a_reserved_word_to_describe_that_process (mapToAvailableJumps color pt b l)))
+ )

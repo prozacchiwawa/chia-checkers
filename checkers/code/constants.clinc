@@ -1,0 +1,4 @@
+(
+  (defconstant AGG_SIG_ME 50)
+  (defconstant CREATE_COIN 51)
+  )

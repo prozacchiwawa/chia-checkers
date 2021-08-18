@@ -1,0 +1,10 @@
+(
+ (defun makeKing (color) (c 1 color))
+ (defun makePawn (color) (c 0 color))
+ (defun isKing (checker) (= (f checker) 1))
+
+ (defun checkerColor (ch) (r ch))
+ (defun otherColor (color) (if (= color 0) 1 0))
+
+ (defun colorOfMaybeChecker (mCh) (if mCh (just (checkerColor (fromJust mCh))) ()))
+ )

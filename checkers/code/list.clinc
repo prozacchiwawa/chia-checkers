@@ -1,0 +1,11 @@
+(
+ ;; concat lists.
+ (defun please_append_my_lists_i_promise_i_wont_use_a_reserved_word_to_describe_that_process (l1)
+   (if l1
+       (if (f l1)
+           (c (f (f l1)) (please_append_my_lists_i_promise_i_wont_use_a_reserved_word_to_describe_that_process (c (r (f l1)) (r l1))))
+         (please_append_my_lists_i_promise_i_wont_use_a_reserved_word_to_describe_that_process (r l1))
+         )
+     ())
+   )
+ )

@@ -1,0 +1,4 @@
+(
+ (defun fromJust (mObj) (if mObj (f mObj) (x "fromJust on nothing")))
+ (defun just (obj) (list obj))
+ )

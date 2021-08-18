@@ -1,0 +1,11 @@
+(
+ (defun m$fromX (m) (f (f m)))
+ (defun m$fromY (m) (r (f m)))
+ (defun m$toX (m) (f (r m)))
+ (defun m$toY (m) (r (r m)))
+
+ (defun validDiagonal3 (dir) (= (abs (f dir)) (abs (r dir))))
+ (defun validDiagonal2 (m) (validDiagonal3 (direction m)))
+ (defun validDiagonal1 (m) (if (+ (= (m$fromX m) (m$toX m)) (= (m$fromY m) (m$toY m))) () (validDiagonal2 m)))
+ (defun validDiagonal (m) (validDiagonal1 m))
+ )
