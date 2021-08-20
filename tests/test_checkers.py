@@ -218,7 +218,8 @@ class TestCheckers:
             bare_coin = await runner.make_move(0,2,1,3)
             assert bare_coin
 
-            await runner.absorb_state(network)
+            height = network.get_height()
+            await runner.absorb_state(height, network)
             board = runner.get_board()
             assert not presentMask(board['black'], 0,2)
             assert presentMask(board['black'], 1,3)
@@ -226,7 +227,8 @@ class TestCheckers:
             bare_coin = await runner.make_move(1,5,2,4)
             assert bare_coin
 
-            await runner.absorb_state(network)
+            height = network.get_height()
+            await runner.absorb_state(height, network)
             board = runner.get_board()
             assert not presentMask(board['red'], 1,5)
             assert presentMask(board['red'], 2,4)
