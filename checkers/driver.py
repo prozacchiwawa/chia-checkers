@@ -1,4 +1,5 @@
 import io
+import time
 from binascii import unhexlify
 
 from clvm import SExp, to_sexp_f
@@ -17,10 +18,6 @@ from cdv.test import CoinWrapper
 GAME_MOJO = 1 # 1 mojo
 INITIAL_BOARD_PYTHON = [1, 0, int_to_bytes(0xa040a040a040a040), int_to_bytes(0x205020502050205)]
 INITIAL_BOARD = SExp.to(INITIAL_BOARD_PYTHON)
-
-def appendlog(s):
-    with open('watch.log','a') as f:
-        f.write(f'{s}\n')
 
 def maskFor(x,y):
     return 1 << ((8 * x) + y)
@@ -177,6 +174,9 @@ class CheckersMover:
         launcher = None
 
         for p in kv_pairs.as_python():
+            if len(p) < 2:
+                continue
+
             if p[0] == b'launcher':
                 launcher = p[1]
             elif p[0] == b'board':
@@ -189,14 +189,15 @@ class CheckersMover:
         blockrec = await network.get_block_record_by_height(height)
         header_hash = blockrec.header_hash
 
-        appendlog(f'height {height} header_hash {header_hash}')
         additions, _ = await network.get_additions_and_removals(header_hash)
 
         for a in additions:
+            if a.coin.amount >= 1000:
+                continue
+
             spend = await network.get_puzzle_and_solution(a.coin.parent_coin_info, height)
             if spend:
                 solution = Program.to(sexp_from_stream(io.BytesIO(unhexlify(str(spend.solution))), to_sexp_f))
-                appendlog(f'solution {disassemble(solution)}')
                 self.take_new_coin(solution)
 
         self.known_height = height

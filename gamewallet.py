@@ -7,19 +7,38 @@ import asyncio
 from pathlib import Path
 import binascii
 
+from typing import Dict, List, Tuple, Optional, Union
+from blspy import AugSchemeMPL, G1Element, G2Element, PrivateKey
+
 from clvm import SExp, to_sexp_f
 
-from chia.util.ints import uint16
+from chia.types.blockchain_format.coin import Coin
+from chia.types.blockchain_format.program import Program
+from chia.types.blockchain_format.sized_bytes import bytes32
+from chia.types.spend_bundle import SpendBundle
+from chia.types.coin_spend import CoinSpend
+from chia.types.coin_record import CoinRecord
+
+from chia.consensus.default_constants import DEFAULT_CONSTANTS
+from chia.wallet.sign_coin_spends import sign_coin_spends
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
+from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (  # standard_transaction
+    puzzle_for_pk,
+    calculate_synthetic_secret_key,
+    DEFAULT_HIDDEN_PUZZLE_HASH,
+)
 
 from chia.rpc.rpc_client import RpcClient
 from chia.rpc.full_node_rpc_client import FullNodeRpcClient
 from chia.rpc.wallet_rpc_client import WalletRpcClient
 
+from chia.util.condition_tools import ConditionOpcode
 from chia.util.config import load_config, save_config
+from chia.util.hash import std_hash
+from chia.util.ints import uint16, uint64
 
 from cdv.util.load_clvm import load_clvm
-from cdv.test import SmartCoinWrapper
+from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper
 
 from checkers.driver import CheckersMover
 
@@ -36,7 +55,8 @@ class GameRecords:
         cursor.execute(stmt, *params)
         cursor.close()
 
-    def __init__(self,netname,mover,client):
+    def __init__(self,cblock,netname,mover,client):
+        self.blocks_ago = cblock
         self.netname = netname
         self.client = client
         self.mover = mover
@@ -49,14 +69,24 @@ class GameRecords:
     def close(self):
         self.db.close()
 
-    def retrieve_current_block(self):
+    async def get_current_height_from_node(self):
+        blockchain_state = await self.client.get_blockchain_state()
+        new_height = blockchain_state['peak'].height
+        return new_height
+
+    async def retrieve_current_block(self):
         cursor = self.db.cursor()
-        current_block = 1
+        current_block = None
 
         for row in cursor.execute("select block from height where net = ? limit 1", (self.netname,)):
             current_block = row[0]
 
         cursor.close()
+
+        if current_block is None:
+            current_block = await self.get_current_height_from_node()
+            current_block -= self.blocks_ago
+
         return current_block
 
     def set_current_block(self,new_height):
@@ -66,15 +96,18 @@ class GameRecords:
         self.db.commit()
 
     async def update_to_current_block(self):
-        current_block = self.retrieve_current_block()
+        current_block = await self.retrieve_current_block()
+        new_height = await self.get_current_height_from_node()
 
-        blockchain_state = await self.client.get_blockchain_state()
-        new_height = blockchain_state['peak'].height
+        if current_block is None:
+            current_block = await self.get_current_height_from_node()
+            current_block -= self.blocks_ago
 
         while new_height > current_block:
-            if new_height - current_block > 50:
-                new_height = current_block + 50
+            if new_height - current_block > 1:
+                new_height = current_block + 1
 
+            print(f'absorb state until block {new_height}')
             await self.mover.absorb_state(new_height, self.client)
             self.set_current_block(new_height)
             current_block = new_height
@@ -98,14 +131,23 @@ class NotMeWallet:
         self.not_our_turn()
 
 class CheckersRunnerWallet:
-    def __init__(self,netname):
+    def __init__(self,netname,blocks_ago):
         self.parent = None
+        self.blocks_ago = blocks_ago
         self.wallet_rpc_client = None
         self.game_records = None
         self.netname = netname
         self.mover = None
-        self._pk = None
+        self.pk_ = None
+        self.sk_ = None
         self.puzzle_hash = None
+        self.wallet = None
+        self.usable_coins = {}
+        self.puzzle_hash = None
+        self.puzzle = None
+
+    def balance(self):
+        return 0
 
     def close(self):
         if self.parent:
@@ -114,7 +156,7 @@ class CheckersRunnerWallet:
             self.wallet_rpc_client.close()
 
     async def pk(self):
-        return self._pk
+        return self.pk_
 
     async def start(self,mover):
         self.mover = mover
@@ -134,17 +176,53 @@ class CheckersRunnerWallet:
         )
 
         self.game_records = GameRecords(
-            self.netname, self.mover, self.parent
+            self.blocks_ago, self.netname, self.mover, self.parent
         )
 
         public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
         last_private_key = await self.wallet_rpc_client.get_private_key(
             public_key_fingerprints[-1]
         )
-        self._pk = binascii.unhexlify(last_private_key['pk'])
-        self.puzzle_hash = puzzle_for_pk(self._pk)
+        self.sk_ = PrivateKey.from_bytes(binascii.unhexlify(last_private_key['sk']))
+        self.pk_ = binascii.unhexlify(last_private_key['pk'])
+        self.puzzle_hash = puzzle_for_pk(self.pk_)
+        self.puzzle = puzzle_for_pk(self.pk_)
+
+        # Get usable coins
+        wallets = await self.wallet_rpc_client.get_wallets()
+        self.wallet = wallets[0]
+        transactions = await self.wallet_rpc_client.get_transactions(self.wallet['id'])
+        for reverse_tidx in range(len(transactions)):
+            tidx = len(transactions) - reverse_tidx - 1
+            t = transactions[tidx]
+            for a in t.additions:
+                self.usable_coins[a.name] = a
+
+            for r in t.removals:
+                if r.name in self.usable_coins:
+                    del self.usable_coins[r.name]
+
+        print(f'usable_coins {self.usable_coins}')
 
         await self.game_records.update_to_current_block()
+
+    def compute_combine_action(
+        self, amt: uint64, actions: List, usable_coins: Dict[bytes32, Coin]
+    ) -> Optional[List[Coin]]:
+        # No one coin is enough, try to find a best fit pair, otherwise combine the two
+        # maximum coins.
+        searcher = CoinPairSearch(amt)
+
+        # Process coins for this round.
+        for k, c in usable_coins.items():
+            searcher.process_coin_for_combine_search(c)
+
+        max_coins, total = searcher.get_result()
+
+        if total >= amt:
+            return max_coins
+        else:
+            return None
 
     async def choose_coin(self, amt):
         """Given an amount requirement, find a coin that contains at least that much chia"""
@@ -181,7 +259,7 @@ class CheckersRunnerWallet:
         assert self.balance() == start_balance
         return await self.choose_coin(amt)
 
-    async def launch_smart_coin(self, program, **kwargs):
+    async def launch_smart_coin(self, source, **kwargs):
         """Create a new smart coin based on a parent coin and return the smart coin's living
         coin to the user or None if the spend failed."""
         amt = uint64(1)
@@ -249,13 +327,18 @@ async def main():
         )
 
         do_launch = False
+        do_init_height = 1
+
         launcher = None
         color = None
 
         if '--launch' in sys.argv[1:]:
             do_launch = True
+        elif '--init' in sys.argv[1:] and len(sys.argv) > 2:
+            do_init_height = int(sys.argv[2])
         elif len(sys.argv) < 3:
             print('usage:')
+            print('gamewallet.py --init <blocks> # Start a new DB accepting games from <blocks> ago until now')
             print('gamewallet.py --launch # Launch a game, returning its identifier')
             print('gamewallet.py [identifier] # Show a game by identifier')
             print('gamewallet.py [identifier] [move] # Make a move in the game')
@@ -264,7 +347,13 @@ async def main():
             launcher = sys.argv[1]
             color = sys.argv[2]
 
-        mywallet = CheckersRunnerWallet('testnet7')
+        if do_init_height != 1:
+            try:
+                os.unlink('checkers.db')
+            except:
+                pass
+
+        mywallet = CheckersRunnerWallet('testnet7', do_init_height)
 
         black_wallet = mywallet if color == 'black' else NotMeWallet()
         red_wallet = mywallet if black_wallet is not mywallet else NotMeWallet()
@@ -273,7 +362,7 @@ async def main():
         await mywallet.start(mover)
 
         if do_launch:
-            launch_tx = await r.launch_smart_coin(inner_puzzle_code)
+            launch_tx = await mywallet.launch_smart_coin(inner_puzzle_code)
             if 'error' in launch_tx.result:
                 print(f'error launching coin: {launch_tx}')
             else:
