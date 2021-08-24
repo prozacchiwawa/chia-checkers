@@ -197,7 +197,7 @@ class CheckersMover:
         )
 
         assert 'error' not in after_move_txn.result
-        if hasattr(after_move_txn.result):
+        if hasattr(after_move_txn.result, 'additions'):
             bare_coin = after_move_txn.result['additions'][0]
 
             self.current_coin = CoinWrapper(

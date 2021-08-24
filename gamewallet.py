@@ -556,6 +556,10 @@ async def main():
                 print(f'found current game coin: {current_coin_name}')
                 if current_coin_name:
                     current_coin = await mywallet.find_coin_by_name(current_coin_name)
+                    if not current_coin:
+                        print(f"Couldn't yet find the most recent coin for the game.  Try again in a moment.")
+                        return
+
                     print(f'set_current_coin {current_coin}')
                     mover.set_current_coin(current_coin)
 
@@ -577,7 +581,7 @@ async def main():
 
                 coin_puzzle = mover.get_coin_puzzle()
                 mover.set_current_coin(
-                    CoinWrapper.from_coin(current_coin.coin, coin_puzzle)
+                    CoinWrapper.from_coin(mover.current_coin.coin, coin_puzzle)
                 )
 
                 await mover.make_move(fromX, fromY, toX, toY)
