@@ -38,6 +38,9 @@ from chia.util.hash import std_hash
 from chia.util.ints import uint16, uint64
 
 from cdv.util.load_clvm import load_clvm
+
+from chia.wallet.derive_keys import master_sk_to_wallet_sk
+
 from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper
 
 from checkers.driver import CheckersMover
@@ -138,12 +141,12 @@ class CheckersRunnerWallet:
         self.game_records = None
         self.netname = netname
         self.mover = None
+        self.public_key_fingerprints = []
         self.pk_ = None
         self.sk_ = None
         self.puzzle_hash = None
         self.wallet = None
         self.usable_coins = {}
-        self.puzzle_hash = None
         self.puzzle = None
 
     def balance(self):
@@ -179,32 +182,47 @@ class CheckersRunnerWallet:
             self.blocks_ago, self.netname, self.mover, self.parent
         )
 
-        public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
-        last_private_key = await self.wallet_rpc_client.get_private_key(
-            public_key_fingerprints[-1]
-        )
-        self.sk_ = PrivateKey.from_bytes(binascii.unhexlify(last_private_key['sk']))
-        self.pk_ = binascii.unhexlify(last_private_key['pk'])
-        self.puzzle_hash = puzzle_for_pk(self.pk_)
-        self.puzzle = puzzle_for_pk(self.pk_)
+        self.public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
+        print(self.public_key_fingerprints)
 
         # Get usable coins
         wallets = await self.wallet_rpc_client.get_wallets()
         self.wallet = wallets[0]
         transactions = await self.wallet_rpc_client.get_transactions(self.wallet['id'])
-        for reverse_tidx in range(len(transactions)):
-            tidx = len(transactions) - reverse_tidx - 1
-            t = transactions[tidx]
+        print(transactions)
+        for t in transactions:
             for a in t.additions:
-                self.usable_coins[a.name] = a
+                if a.parent_coin_info in self.usable_coins:
+                    del self.usable_coins[a.parent_coin_info]
+
+                self.usable_coins[a.name()] = a
 
             for r in t.removals:
-                if r.name in self.usable_coins:
-                    del self.usable_coins[r.name]
+                if r.name() in self.usable_coins:
+                    del self.usable_coins[r.name()]
 
         print(f'usable_coins {self.usable_coins}')
 
         await self.game_records.update_to_current_block()
+
+    async def select_identity_for_coin(self,coin):
+        for pkdata in self.public_key_fingerprints:
+            private_key = await self.wallet_rpc_client.get_private_key(pkdata)
+            sk_data = binascii.unhexlify(private_key['sk'])
+            for i in range(100):
+                sk_ = master_sk_to_wallet_sk(PrivateKey.from_bytes(sk_data), i)
+                pk_ = sk_.get_g1()
+                puzzle = puzzle_for_pk(pk_)
+                puzzle_hash = puzzle.get_tree_hash()
+
+                if puzzle_hash == coin.puzzle_hash:
+                    self.sk_ = sk_
+                    self.pk_ = pk_
+                    self.puzzle = puzzle
+                    self.puzzle_hash = puzzle_hash
+                    return
+
+        raise Exception('Could not find a wallet identity that matches the coin')
 
     def compute_combine_action(
         self, amt: uint64, actions: List, usable_coins: Dict[bytes32, Coin]
@@ -275,6 +293,7 @@ class CheckersRunnerWallet:
 
         if found_coin is None:
             raise ValueError(f"could not find available coin containing {amt} mojo")
+        await self.select_identity_for_coin(found_coin)
 
         # Create a puzzle based on the incoming smart coin
         cw = SmartCoinWrapper(DEFAULT_CONSTANTS.GENESIS_CHALLENGE, source)
@@ -282,6 +301,7 @@ class CheckersRunnerWallet:
             [ConditionOpcode.CREATE_COIN, cw.puzzle_hash(), amt],
         ]
         if amt < found_coin.amount:
+            print(f'spending remaining {amt} to {self.puzzle_hash}')
             condition_args.append([ConditionOpcode.CREATE_COIN, self.puzzle_hash, found_coin.amount - amt])
 
         delegated_puzzle_solution = Program.to((1, condition_args))
@@ -307,6 +327,13 @@ class CheckersRunnerWallet:
             ],
             signature,
         )
+
+        print('debug spend bundle?')
+        print(spend_bundle.to_json_dict())
+        print(binascii.hexlify(bytes(spend_bundle)))
+        spend_bundle.debug()
+        print('^--- spend_bundle.debug()')
+
         pushed: Dict[str, Union[str, List[Coin]]] = await self.parent.push_tx(spend_bundle)
         if "error" not in pushed:
             return cw.custom_coin(found_coin, amt)
@@ -361,13 +388,11 @@ async def main():
         mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet)
         await mywallet.start(mover)
 
+        print(f'puzzle_hash {mywallet.puzzle_hash}')
+
         if do_launch:
-            launch_tx = await mywallet.launch_smart_coin(inner_puzzle_code)
-            if 'error' in launch_tx.result:
-                print(f'error launching coin: {launch_tx}')
-            else:
-                launcher_coin = launch_tx.result['additions'][0]
-                print(f'you are playing black, launcher: {r.puzzle_hash}-{launcher_coin.name()}')
+            launcher_coin = await mywallet.launch_smart_coin(inner_puzzle_code)
+            print(f'you are playing black, launcher: {r.puzzle_hash}-{launcher_coin.name()}')
     finally:
         if black_wallet:
             black_wallet.close()

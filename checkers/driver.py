@@ -173,6 +173,9 @@ class CheckersMover:
         board = None
         launcher = None
 
+        if not kv_pairs.listp():
+            return
+
         for p in kv_pairs.as_python():
             if len(p) < 2:
                 continue
