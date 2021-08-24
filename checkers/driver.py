@@ -68,7 +68,7 @@ def showBoard(b):
     return outstr.getvalue()
 
 def boardDictToLinear(b):
-    return (b['blackmove'], b['king'], b['red'], b['black'])
+    return [b['blackmove'], b['king'], b['red'], b['black']]
 
 def showBoardFromDict(b):
     return showBoard(boardDictToLinear(b))
@@ -111,12 +111,15 @@ class CheckersMover:
 
         return launch_coin, result_coin
 
+    def set_board(self, board):
+        self.board = boardDictToLinear(board)
+
     def get_board(self):
         return {
             'blackmove': self.board[0] != b'',
-            'king': self.board[1],
-            'red': self.board[2],
-            'black': self.board[3]
+            'king': convert_to_int(self.board[1]),
+            'red': convert_to_int(self.board[2]),
+            'black': convert_to_int(self.board[3])
         }
 
     def get_coin_puzzle(self):

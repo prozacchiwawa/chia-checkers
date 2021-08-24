@@ -2,6 +2,7 @@ import os
 import os.path
 import sqlite3
 import yaml
+import json
 import sys
 import asyncio
 from pathlib import Path
@@ -70,7 +71,7 @@ class GameRecords:
 
         self.db = sqlite3.connect('checkers.db')
         self.run_db("create table if not exists height (net text primary key, block integer)")
-        self.run_db("create table if not exists checkers (launcher text, coin text)")
+        self.run_db("create table if not exists checkers (launcher text, board text, coin text)")
         self.run_db("create table if not exists self (puzzle_hash)")
         self.db.commit()
 
@@ -81,17 +82,17 @@ class GameRecords:
         result = None
         cursor = self.db.cursor()
         print(f'find launcher {launcher}')
-        rows = cursor.execute('select coin from checkers where launcher = ? limit 1', (launcher,))
+        rows = cursor.execute('select coin, board from checkers where launcher = ? limit 1', (launcher,))
         for r in rows:
             print(f'found {r}')
-            result = binascii.unhexlify(r[0])
+            result = binascii.unhexlify(r[0]), json.loads(r[1])
         cursor.close()
 
         return result
 
-    def remember_coin(self,launcher,coin):
+    def remember_coin(self,launcher,coin,board):
         self.run_db('delete from checkers where launcher = ?', (launcher,))
-        self.run_db('insert into checkers (launcher, coin) values (?,?)', (launcher, binascii.hexlify(coin)))
+        self.run_db('insert into checkers (launcher, coin, board) values (?,?,?)', (launcher, binascii.hexlify(coin), json.dumps(board)))
 
     async def get_current_height_from_node(self):
         blockchain_state = await self.client.get_blockchain_state()
@@ -514,7 +515,7 @@ async def main():
 
             print(f'you are playing black, identifier: {launcher_coin.name()}-{binascii.hexlify(bytes(mywallet.pk())).decode("utf-8")}-{binascii.hexlify(bytes(notmywallet.pk())).decode("utf-8")}')
 
-            mywallet.game_records.remember_coin(launcher_coin.name(), run_coin.name())
+            mywallet.game_records.remember_coin(launcher_coin.name(), run_coin.name(), mover.get_board())
         else:
             launcher_coin_name, black_puzzle_hash_str, red_puzzle_hash_str = \
                 sys.argv[1].split('-')
@@ -552,9 +553,10 @@ async def main():
 
             if mover.current_coin is None:
                 print(f'launcher_coin_name {launcher_coin_name}')
-                current_coin_name = mywallet.game_records.get_coin_for_launcher(binascii.unhexlify(launcher_coin_name))
-                print(f'found current game coin: {current_coin_name}')
-                if current_coin_name:
+                current_coin_name_and_board = mywallet.game_records.get_coin_for_launcher(binascii.unhexlify(launcher_coin_name))
+                print(f'found current game coin: {current_coin_name_and_board}')
+                if current_coin_name_and_board:
+                    current_coin_name, current_board = current_coin_name_and_board
                     current_coin = await mywallet.find_coin_by_name(current_coin_name)
                     if not current_coin:
                         print(f"Couldn't yet find the most recent coin for the game.  Try again in a moment.")
@@ -562,9 +564,10 @@ async def main():
 
                     print(f'set_current_coin {current_coin}')
                     mover.set_current_coin(current_coin)
+                    mover.set_board(current_board)
 
             else:
-                mywallet.game_records.remember_coin(binascii.unhexlify(launcher_coin_name), mover.current_coin.name())
+                mywallet.game_records.remember_coin(binascii.unhexlify(launcher_coin_name), mover.current_coin.name(), mover.get_board())
 
             print(f'current coin for game {mover.current_coin}')
 
