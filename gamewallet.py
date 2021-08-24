@@ -41,9 +41,12 @@ from cdv.util.load_clvm import load_clvm
 
 from chia.wallet.derive_keys import master_sk_to_wallet_sk
 
-from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper
+from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper, SpendResult
 
-from checkers.driver import CheckersMover
+from checkers.driver import CheckersMover, showBoardFromDict
+
+GAME_MOJO = 1
+NETNAME = 'testnet7'
 
 rpc_host = os.environ['CHIA_RPC_HOST'] if 'CHIA_RPC_HOST' in os.environ \
     else 'localhost'
@@ -57,6 +60,7 @@ class GameRecords:
         cursor = self.db.cursor()
         cursor.execute(stmt, *params)
         cursor.close()
+        self.db.commit()
 
     def __init__(self,cblock,netname,mover,client):
         self.blocks_ago = cblock
@@ -65,12 +69,29 @@ class GameRecords:
         self.mover = mover
 
         self.db = sqlite3.connect('checkers.db')
-        self.run_db("create table if not exists height (net text, block integer)")
-        self.run_db("create table if not exists checkers (block integer, launcher text, board text)")
+        self.run_db("create table if not exists height (net text primary key, block integer)")
+        self.run_db("create table if not exists checkers (launcher text, coin text)")
+        self.run_db("create table if not exists self (puzzle_hash)")
         self.db.commit()
 
     def close(self):
         self.db.close()
+
+    def get_coin_for_launcher(self,launcher):
+        result = None
+        cursor = self.db.cursor()
+        print(f'find launcher {launcher}')
+        rows = cursor.execute('select coin from checkers where launcher = ? limit 1', (launcher,))
+        for r in rows:
+            print(f'found {r}')
+            result = binascii.unhexlify(r[0])
+        cursor.close()
+
+        return result
+
+    def remember_coin(self,launcher,coin):
+        self.run_db('delete from checkers where launcher = ?', (launcher,))
+        self.run_db('insert into checkers (launcher, coin) values (?,?)', (launcher, binascii.hexlify(coin)))
 
     async def get_current_height_from_node(self):
         blockchain_state = await self.client.get_blockchain_state()
@@ -81,7 +102,7 @@ class GameRecords:
         cursor = self.db.cursor()
         current_block = None
 
-        for row in cursor.execute("select block from height where net = ? limit 1", (self.netname,)):
+        for row in cursor.execute("select block from height where net = ? order by block desc limit 1", (self.netname,)):
             current_block = row[0]
 
         cursor.close()
@@ -97,6 +118,29 @@ class GameRecords:
         cursor.execute("insert or replace into height (net, block) values (?,?)", (self.netname, new_height))
         cursor.close()
         self.db.commit()
+
+    def set_self_hash(self,puzzle_hash):
+        cursor = self.db.cursor()
+        cursor.execute("delete from self")
+        cursor.close()
+        self.db.commit()
+
+        cursor = self.db.cursor()
+        cursor.execute("insert or replace into self (puzzle_hash) values (?)", (puzzle_hash,))
+        cursor.close()
+        self.db.commit()
+
+    def get_self_hash(self):
+        result = None
+
+        cursor = self.db.cursor()
+        rows = cursor.execute("select puzzle_hash from self limit 1")
+        for r in rows:
+            result = r[0]
+
+        cursor.close()
+
+        return result
 
     async def update_to_current_block(self):
         current_block = await self.retrieve_current_block()
@@ -118,8 +162,13 @@ class GameRecords:
             new_height = blockchain_state['peak'].height
 
 class NotMeWallet:
-    def __init__(self):
-        pass
+    def __init__(self,public_key):
+        self.pk_ = public_key
+        self.puzzle = puzzle_for_pk(self.pk_)
+        self.puzzle_hash = self.puzzle.get_tree_hash()
+
+    def pk(self):
+        return self.pk_
 
     def close(self):
         pass
@@ -138,16 +187,20 @@ class CheckersRunnerWallet:
         self.parent = None
         self.blocks_ago = blocks_ago
         self.wallet_rpc_client = None
-        self.game_records = None
         self.netname = netname
         self.mover = None
         self.public_key_fingerprints = []
         self.pk_ = None
         self.sk_ = None
+        self.puzzle = None
         self.puzzle_hash = None
         self.wallet = None
         self.usable_coins = {}
-        self.puzzle = None
+        self.game_records = None
+
+    def pk_to_sk(self,pk):
+        if pk == self.pk_:
+            return self.sk_
 
     def balance(self):
         return 0
@@ -158,7 +211,7 @@ class CheckersRunnerWallet:
         if self.wallet_rpc_client:
             self.wallet_rpc_client.close()
 
-    async def pk(self):
+    def pk(self):
         return self.pk_
 
     async def start(self,mover):
@@ -205,6 +258,10 @@ class CheckersRunnerWallet:
 
         await self.game_records.update_to_current_block()
 
+    async def find_coin_by_name(self,name):
+        coin_record = await self.parent.get_coin_record_by_name(name)
+        return coin_record
+
     async def select_identity_for_coin(self,coin):
         for pkdata in self.public_key_fingerprints:
             private_key = await self.wallet_rpc_client.get_private_key(pkdata)
@@ -220,6 +277,9 @@ class CheckersRunnerWallet:
                     self.pk_ = pk_
                     self.puzzle = puzzle
                     self.puzzle_hash = puzzle_hash
+
+                    self.game_records.set_self_hash(self.puzzle_hash)
+
                     return
 
         raise Exception('Could not find a wallet identity that matches the coin')
@@ -291,10 +351,6 @@ class CheckersRunnerWallet:
         else:
             found_coin = await self.choose_coin(amt)
 
-        if found_coin is None:
-            raise ValueError(f"could not find available coin containing {amt} mojo")
-        await self.select_identity_for_coin(found_coin)
-
         # Create a puzzle based on the incoming smart coin
         cw = SmartCoinWrapper(DEFAULT_CONSTANTS.GENESIS_CHALLENGE, source)
         condition_args: List[List] = [
@@ -340,8 +396,78 @@ class CheckersRunnerWallet:
         else:
             return None
 
-    async def spend_coin(self, coin, push_tx=True, amt=None, args=None):
-        pass
+    async def spend_coin(self, coin, pushtx: bool = True, **kwargs):
+        """Given a coin object, invoke it on the blockchain, either as a standard
+        coin if no arguments are given or with custom arguments in args="""
+
+        print(f'spend coin {coin}')
+
+        amt = uint64(1)
+        if "amt" in kwargs:
+            amt = kwargs["amt"]
+
+        delegated_puzzle_solution: Optional[Program] = None
+        if "args" not in kwargs:
+            target_puzzle_hash: bytes32 = self.puzzle_hash
+            # Allow the user to 'give this much chia' to another user.
+            if "to" in kwargs:
+                target_puzzle_hash = kwargs["to"].puzzle_hash
+
+            # Automatic arguments from the user's intention.
+            if "custom_conditions" not in kwargs:
+                solution_list: List[List] = [[ConditionOpcode.CREATE_COIN, target_puzzle_hash, amt]]
+            else:
+                solution_list = kwargs["custom_conditions"]
+            if "remain" in kwargs:
+                remainer: Union[SmartCoinWrapper, Wallet] = kwargs["remain"]
+                remain_amt = uint64(coin.amount - amt)
+                if isinstance(remainer, SmartCoinWrapper):
+                    solution_list.append(
+                        [
+                            ConditionOpcode.CREATE_COIN,
+                            remainer.puzzle_hash(),
+                            remain_amt,
+                        ]
+                    )
+                elif isinstance(remainer, Wallet):
+                    solution_list.append([ConditionOpcode.CREATE_COIN, remainer.puzzle_hash, remain_amt])
+                else:
+                    raise ValueError("remainer is not a wallet or a smart coin")
+
+            delegated_puzzle_solution = Program.to((1, solution_list))
+            # Solution is the solution for the old coin.
+            solution = Program.to([[], delegated_puzzle_solution, []])
+        else:
+            delegated_puzzle_solution = Program.to(kwargs["args"])
+            solution = delegated_puzzle_solution
+
+        solution_for_coin = CoinSpend(
+            coin.as_coin(),
+            coin.puzzle(),
+            solution,
+        )
+
+        # The reason this use of sign_coin_spends exists is that it correctly handles
+        # the signing for non-standard coins.  I don't fully understand the difference but
+        # this definitely does the right thing.
+        try:
+            spend_bundle: SpendBundle = await sign_coin_spends(
+                [solution_for_coin],
+                self.pk_to_sk,
+                DEFAULT_CONSTANTS.AGG_SIG_ME_ADDITIONAL_DATA,
+                DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
+            )
+        except ValueError:
+            spend_bundle = SpendBundle(
+                [solution_for_coin],
+                G2Element(),
+            )
+
+        if pushtx:
+            pushed: Dict[str, Union[str, List[Coin]]] = await self.parent.push_tx(spend_bundle)
+            return SpendResult(pushed)
+        else:
+            return spend_bundle
 
 async def main():
     black_wallet = None
@@ -353,46 +479,112 @@ async def main():
             "checkers.cl", "checkers.code", search_paths=["checkers/code"]
         )
 
-        do_launch = False
+        do_launch = None
         do_init_height = 1
 
         launcher = None
         color = None
 
-        if '--launch' in sys.argv[1:]:
-            do_launch = True
-        elif '--init' in sys.argv[1:] and len(sys.argv) > 2:
-            do_init_height = int(sys.argv[2])
-        elif len(sys.argv) < 3:
+        if '--launch' in sys.argv[1:] and len(sys.argv) > 2:
+            do_launch = sys.argv[2]
+        elif len(sys.argv) < 2:
             print('usage:')
-            print('gamewallet.py --init <blocks> # Start a new DB accepting games from <blocks> ago until now')
-            print('gamewallet.py --launch # Launch a game, returning its identifier')
-            print('gamewallet.py [identifier] # Show a game by identifier')
+            print('gamewallet.py --launch <red-player-pk> # Launch a game, returning its identifier')
+            print(' -- returns identifier')
+            print('gamewallet.py [identifier] # Show the game board')
             print('gamewallet.py [identifier] [move] # Make a move in the game')
             sys.exit(1)
-        else:
-            launcher = sys.argv[1]
-            color = sys.argv[2]
-
-        if do_init_height != 1:
-            try:
-                os.unlink('checkers.db')
-            except:
-                pass
-
-        mywallet = CheckersRunnerWallet('testnet7', do_init_height)
-
-        black_wallet = mywallet if color == 'black' else NotMeWallet()
-        red_wallet = mywallet if black_wallet is not mywallet else NotMeWallet()
-
-        mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet)
-        await mywallet.start(mover)
-
-        print(f'puzzle_hash {mywallet.puzzle_hash}')
 
         if do_launch:
-            launcher_coin = await mywallet.launch_smart_coin(inner_puzzle_code)
-            print(f'you are playing black, launcher: {r.puzzle_hash}-{launcher_coin.name()}')
+            # Init wallet configuration for launching
+            mywallet = CheckersRunnerWallet(NETNAME, do_init_height)
+            notmywallet = NotMeWallet(binascii.unhexlify(do_launch))
+            black_wallet = mywallet
+            red_wallet = notmywallet
+
+            mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet)
+            await mywallet.start(mover)
+
+            found_coin = await mywallet.choose_coin(GAME_MOJO)
+            if found_coin is None:
+                raise ValueError(f"could not find available coin containing {amt} mojo")
+            await mywallet.select_identity_for_coin(found_coin)
+
+            launcher_coin, run_coin = await mover.launch_game(found_coin)
+
+            print(f'you are playing black, identifier: {launcher_coin.name()}-{binascii.hexlify(bytes(mywallet.pk())).decode("utf-8")}-{binascii.hexlify(bytes(notmywallet.pk())).decode("utf-8")}')
+
+            mywallet.game_records.remember_coin(launcher_coin.name(), run_coin.name())
+        else:
+            launcher_coin_name, black_puzzle_hash_str, red_puzzle_hash_str = \
+                sys.argv[1].split('-')
+
+            if len(sys.argv) > 2:
+                moveFrom, moveTo = sys.argv[2].split(':')
+                fromX, fromY = [int(x) for x in moveFrom.split(',')]
+                toX, toY = [int(x) for x in moveTo.split(',')]
+            else:
+                fromX, fromY, toX, toY = None, None, None, None
+
+            black_puzzle_hash = binascii.unhexlify(black_puzzle_hash_str)
+            red_puzzle_hash = binascii.unhexlify(red_puzzle_hash_str)
+
+            # Determine who we are
+            mywallet = CheckersRunnerWallet(NETNAME, do_init_height)
+
+            black_wallet = mywallet
+            red_wallet = NotMeWallet(red_puzzle_hash)
+
+            mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet, launcher_name = binascii.unhexlify(launcher_coin_name))
+            await mywallet.start(mover)
+
+            self_puzzle_hash = mywallet.game_records.get_self_hash()
+
+            if mywallet.game_records.get_self_hash() == red_puzzle_hash:
+                # We're playing red so reconfigure.
+                mywallet.close()
+
+                mywallet = CheckersRunnerWallet(NETNAME, do_init_height)
+                red_wallet = mywallet
+                black_wallet = NotMeWallet(black_puzzle_hash)
+                mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet)
+                await mywallet.start(mover)
+
+            if mover.current_coin is None:
+                print(f'launcher_coin_name {launcher_coin_name}')
+                current_coin_name = mywallet.game_records.get_coin_for_launcher(binascii.unhexlify(launcher_coin_name))
+                print(f'found current game coin: {current_coin_name}')
+                if current_coin_name:
+                    current_coin = await mywallet.find_coin_by_name(current_coin_name)
+                    print(f'set_current_coin {current_coin}')
+                    mover.set_current_coin(current_coin)
+
+            else:
+                mywallet.game_records.remember_coin(binascii.unhexlify(launcher_coin_name), mover.current_coin.name())
+
+            print(f'current coin for game {mover.current_coin}')
+
+            if fromX is not None:
+                launch_coin = await mywallet.find_coin_by_name(
+                    binascii.unhexlify(launcher_coin_name)
+                )
+
+                await mywallet.select_identity_for_coin(launch_coin.coin)
+
+                mover.set_launch_coin(
+                    CoinWrapper.from_coin(launch_coin.coin, None)
+                )
+
+                coin_puzzle = mover.get_coin_puzzle()
+                mover.set_current_coin(
+                    CoinWrapper.from_coin(current_coin.coin, coin_puzzle)
+                )
+
+                await mover.make_move(fromX, fromY, toX, toY)
+            else:
+                board = mover.get_board()
+                print(showBoardFromDict(board))
+
     finally:
         if black_wallet:
             black_wallet.close()

@@ -22,16 +22,32 @@ INITIAL_BOARD = SExp.to(INITIAL_BOARD_PYTHON)
 def maskFor(x,y):
     return 1 << ((8 * x) + y)
 
+def convert_to_int(b):
+    if type(b) == type(0):
+        return b
+    elif type(b) == type(False):
+        if b:
+            return 1
+        else:
+            return 0
+    else:
+        return int_from_bytes(b)
+
 def showBoard(b):
     outstr = io.StringIO()
+
+    if convert_to_int(b[0]):
+        outstr.write('Black to move\n')
+    else:
+        outstr.write('Red to move\n')
 
     for i in range(64):
         x = i % 8
         y = int(i / 8)
         bit = maskFor(x,y)
-        king = maskFor(x,y) & int_from_bytes(b[1])
-        red = maskFor(x,y) & int_from_bytes(b[2])
-        black = maskFor(x,y) & int_from_bytes(b[3])
+        king = maskFor(x,y) & convert_to_int(b[1])
+        red = maskFor(x,y) & convert_to_int(b[2])
+        black = maskFor(x,y) & convert_to_int(b[3])
 
         if x == 0 and y != 0:
             outstr.write('\n')
@@ -51,16 +67,22 @@ def showBoard(b):
 
     return outstr.getvalue()
 
+def boardDictToLinear(b):
+    return (b['blackmove'], b['king'], b['red'], b['black'])
+
+def showBoardFromDict(b):
+    return showBoard(boardDictToLinear(b))
+
 def make_move_sexp(fromX,fromY,toX,toY):
     return fromX + (fromY << 8) + (toX << 16) + (toY << 24)
 
 class CheckersMover:
-    def __init__(self,inner_puzzle_code,player_black,player_red):
+    def __init__(self,inner_puzzle_code,player_black,player_red,launcher_name = None):
         self.inner_puzzle_code = inner_puzzle_code
         self.known_height = 1
         self.black = player_black
         self.red = player_red
-        self.launch_coin = None
+        self.launch_coin = launcher_name
         self.first_coin = None
         self.current_coin = None
         self.board = INITIAL_BOARD_PYTHON
@@ -97,11 +119,30 @@ class CheckersMover:
             'black': self.board[3]
         }
 
+    def get_coin_puzzle(self):
+        return self.inner_puzzle_code.curry(
+            self.inner_puzzle_code.get_tree_hash(),
+            self.launch_coin.name(), # Launcher
+            self.black.pk(),
+            self.red.pk(),
+            self.black.puzzle_hash,
+            self.red.puzzle_hash,
+            GAME_MOJO,
+            SExp.to(self.board)
+        )
+
+
     def get_next_mover(self):
         if self.board[0] != b'':
             return self.black
         else:
             return self.red
+
+    def set_current_coin(self,current_coin):
+        self.current_coin = current_coin
+
+    def set_launch_coin(self,launch_coin):
+        self.launch_coin = launch_coin
 
     async def make_move(self,fromX,fromY,toX,toY):
         move = make_move_sexp(fromX,fromY,toX,toY)
@@ -125,8 +166,8 @@ class CheckersMover:
             OPERATOR_LOOKUP
         )
 
-        if self.current_coin is not self.first_coin:
-            assert current_puzzle.get_tree_hash() == self.current_coin.puzzle_hash
+        # if self.current_coin is not self.first_coin:
+        #     assert current_puzzle.get_tree_hash() == self.current_coin.puzzle_hash
 
         expectedPuzzleHash = bytes32(result.first().as_python())
         after_move_puzzle = self.inner_puzzle_code.curry(
@@ -147,6 +188,7 @@ class CheckersMover:
             ("launcher", self.launch_coin.name())
         ]
         args = SExp.to([[], maybeMove, moveTail])
+        print(f'doing spend from {player_to_move.puzzle_hash}')
         after_move_txn = await player_to_move.spend_coin(
             self.current_coin,
             push_tx=True,
@@ -155,19 +197,22 @@ class CheckersMover:
         )
 
         assert 'error' not in after_move_txn.result
-        bare_coin = after_move_txn.result['additions'][0]
+        if hasattr(after_move_txn.result):
+            bare_coin = after_move_txn.result['additions'][0]
 
-        self.current_coin = CoinWrapper(
-            bare_coin.parent_coin_info,
-            after_move_puzzle.get_tree_hash(),
-            GAME_MOJO,
-            after_move_puzzle
-        )
+            self.current_coin = CoinWrapper(
+                bare_coin.parent_coin_info,
+                after_move_puzzle.get_tree_hash(),
+                GAME_MOJO,
+                after_move_puzzle
+            )
 
-        assert self.current_coin.puzzle_hash == expectedPuzzleHash
-        return self.current_coin
+            assert self.current_coin.puzzle_hash == expectedPuzzleHash
+            return self.current_coin
+        else:
+            return True
 
-    def take_new_coin(self,solution):
+    def take_new_coin(self,coin,solution):
         kv_pairs = solution.rest().rest().first()
 
         board = None
@@ -185,7 +230,14 @@ class CheckersMover:
             elif p[0] == b'board':
                 board = p[1:]
 
-        if board and launcher and launcher == self.launch_coin.name():
+        want_launch_name = None
+        if hasattr(self.launch_coin,'name'):
+            want_launch_name = self.launch_coin.name()
+        else:
+            want_launch_name = self.launch_coin
+
+        if board and launcher and launcher == want_launch_name:
+            self.current_coin = coin
             self.board = board
 
     async def absorb_state(self,height,network):
@@ -201,7 +253,7 @@ class CheckersMover:
             spend = await network.get_puzzle_and_solution(a.coin.parent_coin_info, height)
             if spend:
                 solution = Program.to(sexp_from_stream(io.BytesIO(unhexlify(str(spend.solution))), to_sexp_f))
-                self.take_new_coin(solution)
+                self.take_new_coin(a.coin,solution)
 
         self.known_height = height
 
