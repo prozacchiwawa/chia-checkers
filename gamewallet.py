@@ -215,9 +215,7 @@ class CheckersRunnerWallet:
     def pk(self):
         return self.pk_
 
-    async def start(self,mover):
-        self.mover = mover
-
+    async def create_rpc_connections(self):
         root_dir = os.environ['CHIA_ROOT'] if 'CHIA_ROOT' in os.environ \
             else os.path.join(
                     os.environ['HOME'], '.chia/mainnet'
@@ -231,6 +229,38 @@ class CheckersRunnerWallet:
         self.wallet_rpc_client = await WalletRpcClient.create(
             rpc_host, uint16(wallet_rpc_port), Path(root_dir), config
         )
+
+    async def wallet_get_pk(self,pkf_optional: Optional['Number']):
+        await self.create_rpc_connections()
+        self.public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
+        if len(self.public_key_fingerprints) == 0:
+            raise Exception('No key fingerprints available')
+
+        if pkf_optional is not None:
+            pkdata = pkf_optional
+        else:
+            pkdata = self.public_key_fingerprints[0]
+
+        private_key = await self.wallet_rpc_client.get_private_key(pkdata)
+        sk_data = binascii.unhexlify(private_key['sk'])
+        sk_ = master_sk_to_wallet_sk(PrivateKey.from_bytes(sk_data), 0)
+        pk_ = sk_.get_g1()
+        puzzle = puzzle_for_pk(pk_)
+        puzzle_hash = puzzle.get_tree_hash()
+
+        self.sk_ = sk_
+        self.pk_ = pk_
+        self.puzzle = puzzle
+        self.puzzle_hash = puzzle_hash
+
+        self.game_records.set_self_hash(self.puzzle_hash)
+
+        return self.pk_
+
+    async def start(self,mover):
+        self.mover = mover
+
+        await self.create_rpc_connections()
 
         self.game_records = GameRecords(
             self.blocks_ago, self.netname, self.mover, self.parent
@@ -488,10 +518,25 @@ async def main():
 
         if '--launch' in sys.argv[1:] and len(sys.argv) > 2:
             do_launch = sys.argv[2]
+        elif '--my-pk' in sys.argv[1:]:
+            pk_fingerprint = None
+
+            if len(sys.argv) > 2:
+                pk_fingerprint = int(sys.argv[1])
+
+            mywallet = CheckersRunnerWallet(NETNAME, do_init_height)
+            try:
+                await mywallet.wallet_get_pk(pk_fingerprint)
+                print(mywallet.pk())
+            finally:
+                mywallet.close()
+
         elif len(sys.argv) < 2:
             print('usage:')
             print('gamewallet.py --launch <red-player-pk> # Launch a game, returning its identifier')
             print(' -- returns identifier')
+            print('gamewallet.py --my-pk # Give my pk for the game to start')
+            print(' -- returns public key')
             print('gamewallet.py [identifier] # Show the game board')
             print('gamewallet.py [identifier] [move] # Make a move in the game')
             sys.exit(1)
