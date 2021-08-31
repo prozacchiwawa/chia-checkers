@@ -1,4 +1,4 @@
 (
-  (defun eq (a b) (= (sha256tree a) (sha256tree b)))
+  (defun eq (A B) (= (sha256tree A) (sha256tree B)))
   (defun label (_ actually) (i actually actually actually))
   )
