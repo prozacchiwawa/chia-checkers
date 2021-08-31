@@ -40,6 +40,9 @@ from chia.util.ints import uint16, uint64
 
 from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper
 
+GAME_MOJO = 1
+LARGE_NUMBER_OF_BLOCKS = 3000
+
 class SpendResult:
     def __init__(self, result: Dict):
         """Constructor for internal use.

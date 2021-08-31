@@ -45,11 +45,9 @@ from chia.wallet.derive_keys import master_sk_to_wallet_sk
 from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper
 
 from checkers.driver import CheckersMover, showBoardFromDict
-from support import SpendResult, FakeCoin
+from support import SpendResult, FakeCoin, GAME_MOJO, LARGE_NUMBER_OF_BLOCKS
 
-GAME_MOJO = 1
 NETNAME = 'testnet7'
-LARGE_NUMBER_OF_BLOCKS = 3000
 
 rpc_host = os.environ['CHIA_RPC_HOST'] if 'CHIA_RPC_HOST' in os.environ \
     else 'localhost'
