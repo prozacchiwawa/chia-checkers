@@ -42,9 +42,10 @@ from cdv.util.load_clvm import load_clvm
 
 from chia.wallet.derive_keys import master_sk_to_wallet_sk
 
-from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper, SpendResult
+from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper
 
 from checkers.driver import CheckersMover, showBoardFromDict
+from support import SpendResult, FakeCoin
 
 GAME_MOJO = 1
 NETNAME = 'testnet7'
@@ -56,18 +57,6 @@ full_node_rpc_port = os.environ['CHIA_RPC_PORT'] if 'CHIA_RPC_PORT' in os.enviro
     else '8555'
 wallet_rpc_port = os.environ['CHIA_WALLET_PORT'] if 'CHIA_WALLET_PORT' in os.environ \
     else '9256'
-
-class FakeCoin:
-    def __init__(self,name : bytes32):
-        self.name_ = name
-        self.coin = self
-        self.amount = GAME_MOJO
-
-    def as_coin(self):
-        return self
-
-    def name(self):
-        return self.name_
 
 class GameRecords:
     def run_db(self,stmt,*params):
