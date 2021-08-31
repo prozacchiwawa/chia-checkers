@@ -531,10 +531,7 @@ class CheckersRunnerWallet:
 
         if pushtx:
             pushed: Dict[str, Union[str, List[Coin]]] = await self.parent.push_tx(spend_bundle)
-            if ('additions' in pushed or 'error' in pushed):
-                return SpendResult(pushed)
-            else:
-                return pushed
+            return SpendResult(pushed)
         else:
             return spend_bundle
 
