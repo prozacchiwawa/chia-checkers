@@ -48,6 +48,7 @@ from checkers.driver import CheckersMover, showBoardFromDict
 
 GAME_MOJO = 1
 NETNAME = 'testnet7'
+LARGE_NUMBER_OF_BLOCKS = 3000
 
 rpc_host = os.environ['CHIA_RPC_HOST'] if 'CHIA_RPC_HOST' in os.environ \
     else 'localhost'
@@ -55,6 +56,18 @@ full_node_rpc_port = os.environ['CHIA_RPC_PORT'] if 'CHIA_RPC_PORT' in os.enviro
     else '8555'
 wallet_rpc_port = os.environ['CHIA_WALLET_PORT'] if 'CHIA_WALLET_PORT' in os.environ \
     else '9256'
+
+class FakeCoin:
+    def __init__(self,name : bytes32):
+        self.name_ = name
+        self.coin = self
+        self.amount = GAME_MOJO
+
+    def as_coin(self):
+        return self
+
+    def name(self):
+        return self.name_
 
 class GameRecords:
     def run_db(self,stmt,*params):
@@ -143,9 +156,11 @@ class GameRecords:
 
         return result
 
-    async def update_to_current_block(self):
+    async def update_to_current_block(self, blocks_ago):
         current_block = await self.retrieve_current_block()
         new_height = await self.get_current_height_from_node()
+        if new_height - blocks_ago < current_block:
+            current_block = max(new_height - blocks_ago, 1)
 
         if current_block is None:
             current_block = await self.get_current_height_from_node()
@@ -215,6 +230,25 @@ class CheckersRunnerWallet:
     def pk(self):
         return self.pk_
 
+    async def public_key_matches(self,pk):
+        for pkdata in self.public_key_fingerprints:
+            private_key = await self.wallet_rpc_client.get_private_key(pkdata)
+            sk_data = binascii.unhexlify(private_key['sk'])
+            for i in range(100):
+                sk_ = master_sk_to_wallet_sk(PrivateKey.from_bytes(sk_data), i)
+                pk_ = sk_.get_g1()
+                if pk_ == pk:
+                    puzzle = puzzle_for_pk(pk_)
+                    puzzle_hash = puzzle.get_tree_hash()
+
+                    self.sk_ = sk_
+                    self.pk_ = pk_
+                    self.puzzle = puzzle
+                    self.puzzle_hash = puzzle_hash
+                    return True
+
+        return False
+
     async def create_rpc_connections(self):
         root_dir = os.environ['CHIA_ROOT'] if 'CHIA_ROOT' in os.environ \
             else os.path.join(
@@ -233,6 +267,7 @@ class CheckersRunnerWallet:
     async def wallet_get_pk(self,pkf_optional: Optional['Number']):
         await self.create_rpc_connections()
         self.public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
+
         if len(self.public_key_fingerprints) == 0:
             raise Exception('No key fingerprints available')
 
@@ -253,8 +288,6 @@ class CheckersRunnerWallet:
         self.puzzle = puzzle
         self.puzzle_hash = puzzle_hash
 
-        self.game_records.set_self_hash(self.puzzle_hash)
-
         return self.pk_
 
     async def start(self,mover):
@@ -265,6 +298,8 @@ class CheckersRunnerWallet:
         self.game_records = GameRecords(
             self.blocks_ago, self.netname, self.mover, self.parent
         )
+
+        self.game_records.set_self_hash(self.puzzle_hash)
 
         self.public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
         print(self.public_key_fingerprints)
@@ -287,7 +322,7 @@ class CheckersRunnerWallet:
 
         print(f'usable_coins {self.usable_coins}')
 
-        await self.game_records.update_to_current_block()
+        await self.game_records.update_to_current_block(self.blocks_ago)
 
     async def find_coin_by_name(self,name):
         coin_record = await self.parent.get_coin_record_by_name(name)
@@ -494,7 +529,7 @@ class CheckersRunnerWallet:
                 G2Element(),
             )
 
-        if pushtx:
+        if pushtx and ('additions' in pushed or 'error' in pushed):
             pushed: Dict[str, Union[str, List[Coin]]] = await self.parent.push_tx(spend_bundle)
             return SpendResult(pushed)
         else:
@@ -525,11 +560,12 @@ async def main():
                 pk_fingerprint = int(sys.argv[1])
 
             mywallet = CheckersRunnerWallet(NETNAME, do_init_height)
-            try:
-                await mywallet.wallet_get_pk(pk_fingerprint)
-                print(mywallet.pk())
-            finally:
-                mywallet.close()
+            black_wallet = mywallet
+
+            await mywallet.wallet_get_pk(pk_fingerprint)
+            print(mywallet.pk())
+
+            return
 
         elif len(sys.argv) < 2:
             print('usage:')
@@ -562,7 +598,7 @@ async def main():
 
             mywallet.game_records.remember_coin(launcher_coin.name(), run_coin.name(), mover.get_board())
         else:
-            launcher_coin_name, black_puzzle_hash_str, red_puzzle_hash_str = \
+            launcher_coin_name, black_public_key_str, red_public_key_str = \
                 sys.argv[1].split('-')
 
             if len(sys.argv) > 2:
@@ -572,29 +608,39 @@ async def main():
             else:
                 fromX, fromY, toX, toY = None, None, None, None
 
-            black_puzzle_hash = binascii.unhexlify(black_puzzle_hash_str)
-            red_puzzle_hash = binascii.unhexlify(red_puzzle_hash_str)
+            black_public_key = G1Element.from_bytes(
+                binascii.unhexlify(black_public_key_str)
+            )
+            red_public_key = G1Element.from_bytes(
+                binascii.unhexlify(red_public_key_str)
+            )
 
             # Determine who we are
             mywallet = CheckersRunnerWallet(NETNAME, do_init_height)
 
             black_wallet = mywallet
-            red_wallet = NotMeWallet(red_puzzle_hash)
+            red_wallet = NotMeWallet(red_public_key)
 
             mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet, launcher_name = binascii.unhexlify(launcher_coin_name))
             await mywallet.start(mover)
 
             self_puzzle_hash = mywallet.game_records.get_self_hash()
+            matches_red = \
+                await mywallet.public_key_matches(red_public_key)
 
-            if mywallet.game_records.get_self_hash() == red_puzzle_hash:
+            if matches_red:
                 # We're playing red so reconfigure.
                 mywallet.close()
 
-                mywallet = CheckersRunnerWallet(NETNAME, do_init_height)
+                mywallet = CheckersRunnerWallet(NETNAME, LARGE_NUMBER_OF_BLOCKS)
                 red_wallet = mywallet
-                black_wallet = NotMeWallet(black_puzzle_hash)
+                black_wallet = NotMeWallet(black_public_key)
                 mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet)
+                mover.set_launch_coin(FakeCoin(bytes32(binascii.unhexlify(launcher_coin_name))))
                 await mywallet.start(mover)
+
+                # Select identity based on key embedded in game id
+                await mywallet.public_key_matches(red_public_key)
 
             if mover.current_coin is None:
                 print(f'launcher_coin_name {launcher_coin_name}')
@@ -621,16 +667,30 @@ async def main():
                     binascii.unhexlify(launcher_coin_name)
                 )
 
-                await mywallet.select_identity_for_coin(launch_coin.coin)
+                if not matches_red:
+                    await mywallet.select_identity_for_coin(launch_coin.coin)
 
-                mover.set_launch_coin(
-                    CoinWrapper.from_coin(launch_coin.coin, None)
-                )
+                    mover.set_launch_coin(
+                        CoinWrapper.from_coin(launch_coin.coin, None)
+                    )
 
                 coin_puzzle = mover.get_coin_puzzle()
-                mover.set_current_coin(
-                    CoinWrapper.from_coin(mover.current_coin.coin, coin_puzzle)
-                )
+                target_coin = None
+
+                if hasattr(mover.current_coin,'coin'):
+                    target_coin = \
+                        CoinWrapper.from_coin(
+                            mover.current_coin.coin,
+                            coin_puzzle
+                        )
+                else:
+                    target_coin = \
+                        CoinWrapper.from_coin(
+                            mover.current_coin,
+                            coin_puzzle
+                        )
+
+                mover.set_current_coin(target_coin)
 
                 await mover.make_move(fromX, fromY, toX, toY)
             else:
