@@ -529,9 +529,12 @@ class CheckersRunnerWallet:
                 G2Element(),
             )
 
-        if pushtx and ('additions' in pushed or 'error' in pushed):
+        if pushtx:
             pushed: Dict[str, Union[str, List[Coin]]] = await self.parent.push_tx(spend_bundle)
-            return SpendResult(pushed)
+            if ('additions' in pushed or 'error' in pushed):
+                return SpendResult(pushed)
+            else:
+                return pushed
         else:
             return spend_bundle
 

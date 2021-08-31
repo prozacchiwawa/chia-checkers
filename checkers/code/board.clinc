@@ -41,7 +41,7 @@
  (defun listCheckersWithColor1 (n color b chq)
    (listCheckersWithColor2
     (if chq
-        (if (= (colorOfMaybeChecker chq) (just color))
+        (if (eq (colorOfMaybeChecker chq) (just color))
             (c (moddiv n 8) (fromJust chq))
           ()
           )

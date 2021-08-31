@@ -14,7 +14,7 @@
     sEqSteps
     sMod2Eq0
     theChecker
-    (= (colorOfMaybeChecker theChecker) (just oc))))
+    (eq (colorOfMaybeChecker theChecker) (just oc))))
 
  (defun newJumpState1 (oc steps jcoord b s)
    (newJumpState2 oc (= steps s) (not (r (divmod s 2))) (checkerAt jcoord b)))
