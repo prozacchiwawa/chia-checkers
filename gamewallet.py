@@ -22,7 +22,6 @@ from chia.types.coin_record import CoinRecord
 
 from chia.consensus.default_constants import DEFAULT_CONSTANTS
 from chia.wallet.sign_coin_spends import sign_coin_spends
-from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (  # standard_transaction
     puzzle_for_pk,
     calculate_synthetic_secret_key,
@@ -37,17 +36,37 @@ from chia.util.condition_tools import ConditionOpcode
 from chia.util.config import load_config, save_config
 from chia.util.hash import std_hash
 from chia.util.ints import uint16, uint64
+from chia.util.agg_sig_me_additional_data import get_agg_sig_me_additional_data
 
 from cdv.util.load_clvm import load_clvm
 
 from chia.wallet.derive_keys import master_sk_to_wallet_sk
 
-from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper
+from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper, Wallet
 
+from checkers.gamerecords import GameRecords
 from checkers.driver import CheckersMover, showBoardFromDict
+
 from support import SpendResult, FakeCoin, GAME_MOJO, LARGE_NUMBER_OF_BLOCKS
 
-NETNAME = 'testnet7'
+## HTTP LOGGING
+import logging
+
+AGG_SIG_ME_ADDITIONAL_DATA = get_agg_sig_me_additional_data()
+print(f'AGG_SIG_ME_ADDITIONAL_DATA = {AGG_SIG_ME_ADDITIONAL_DATA}')
+
+# These two lines enable debugging at httplib level (requests->urllib3->http.client)
+# You will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
+# The only thing missing will be the response.body which is not logged.
+try:
+    import http.client as http_client
+except ImportError:
+    # Python 2
+    import httplib as http_client
+http_client.HTTPConnection.debuglevel = 1
+## HTTP LOGGING
+
+NETNAME = 'testnet10'
 
 rpc_host = os.environ['CHIA_RPC_HOST'] if 'CHIA_RPC_HOST' in os.environ \
     else 'localhost'
@@ -56,115 +75,7 @@ full_node_rpc_port = os.environ['CHIA_RPC_PORT'] if 'CHIA_RPC_PORT' in os.enviro
 wallet_rpc_port = os.environ['CHIA_WALLET_PORT'] if 'CHIA_WALLET_PORT' in os.environ \
     else '9256'
 
-class GameRecords:
-    def run_db(self,stmt,*params):
-        cursor = self.db.cursor()
-        cursor.execute(stmt, *params)
-        cursor.close()
-        self.db.commit()
-
-    def __init__(self,cblock,netname,mover,client):
-        self.blocks_ago = cblock
-        self.netname = netname
-        self.client = client
-        self.mover = mover
-
-        self.db = sqlite3.connect('checkers.db')
-        self.run_db("create table if not exists height (net text primary key, block integer)")
-        self.run_db("create table if not exists checkers (launcher text, board text, coin text)")
-        self.run_db("create table if not exists self (puzzle_hash)")
-        self.db.commit()
-
-    def close(self):
-        self.db.close()
-
-    def get_coin_for_launcher(self,launcher):
-        result = None
-        cursor = self.db.cursor()
-        print(f'find launcher {launcher}')
-        rows = cursor.execute('select coin, board from checkers where launcher = ? limit 1', (launcher,))
-        for r in rows:
-            print(f'found {r}')
-            result = binascii.unhexlify(r[0]), json.loads(r[1])
-        cursor.close()
-
-        return result
-
-    def remember_coin(self,launcher,coin,board):
-        self.run_db('delete from checkers where launcher = ?', (launcher,))
-        self.run_db('insert into checkers (launcher, coin, board) values (?,?,?)', (launcher, binascii.hexlify(coin), json.dumps(board)))
-
-    async def get_current_height_from_node(self):
-        blockchain_state = await self.client.get_blockchain_state()
-        new_height = blockchain_state['peak'].height
-        return new_height
-
-    async def retrieve_current_block(self):
-        cursor = self.db.cursor()
-        current_block = None
-
-        for row in cursor.execute("select block from height where net = ? order by block desc limit 1", (self.netname,)):
-            current_block = row[0]
-
-        cursor.close()
-
-        if current_block is None:
-            current_block = await self.get_current_height_from_node()
-            current_block -= self.blocks_ago
-
-        return current_block
-
-    def set_current_block(self,new_height):
-        cursor = self.db.cursor()
-        cursor.execute("insert or replace into height (net, block) values (?,?)", (self.netname, new_height))
-        cursor.close()
-        self.db.commit()
-
-    def set_self_hash(self,puzzle_hash):
-        cursor = self.db.cursor()
-        cursor.execute("delete from self")
-        cursor.close()
-        self.db.commit()
-
-        cursor = self.db.cursor()
-        cursor.execute("insert or replace into self (puzzle_hash) values (?)", (puzzle_hash,))
-        cursor.close()
-        self.db.commit()
-
-    def get_self_hash(self):
-        result = None
-
-        cursor = self.db.cursor()
-        rows = cursor.execute("select puzzle_hash from self limit 1")
-        for r in rows:
-            result = r[0]
-
-        cursor.close()
-
-        return result
-
-    async def update_to_current_block(self, blocks_ago):
-        current_block = await self.retrieve_current_block()
-        new_height = await self.get_current_height_from_node()
-        if new_height - blocks_ago < current_block:
-            current_block = max(new_height - blocks_ago, 1)
-
-        if current_block is None:
-            current_block = await self.get_current_height_from_node()
-            current_block -= self.blocks_ago
-
-        while new_height > current_block:
-            if new_height - current_block > 1:
-                new_height = current_block + 1
-
-            print(f'absorb state until block {new_height}')
-            await self.mover.absorb_state(new_height, self.client)
-            self.set_current_block(new_height)
-            current_block = new_height
-            blockchain_state = await self.client.get_blockchain_state()
-            new_height = blockchain_state['peak'].height
-
-class NotMeWallet:
+class NotMeWallet(Wallet):
     def __init__(self,public_key):
         self.pk_ = public_key
         self.puzzle = puzzle_for_pk(self.pk_)
@@ -194,6 +105,7 @@ class CheckersRunnerWallet:
         self.mover = None
         self.public_key_fingerprints = []
         self.pk_ = None
+        self.primary_sk_ = None
         self.sk_ = None
         self.puzzle = None
         self.puzzle_hash = None
@@ -202,8 +114,30 @@ class CheckersRunnerWallet:
         self.game_records = None
 
     def pk_to_sk(self,pk):
+        print('want pk %s (%s) have %s' % (pk, type(pk), self.pk_))
         if pk == self.pk_:
             return self.sk_
+
+        print('primary_sk %s' % self.primary_sk_)
+        try_sk = calculate_synthetic_secret_key(self.sk_, DEFAULT_HIDDEN_PUZZLE_HASH)
+        try_pk = try_sk.get_g1()
+        if pk == try_sk.get_g1():
+            return try_sk
+
+        # Maybe given a puzzle hash
+        if pk == self.puzzle_hash:
+            print('was given a puzzle hash but wanted a pk')
+
+    async def puzzle_for_puzzle_hash(self, puzzle_hash):
+        for pkdata in self.public_key_fingerprints:
+            private_key = await self.wallet_rpc_client.get_private_key(pkdata)
+            sk_data = binascii.unhexlify(private_key['sk'])
+            for i in range(1000):
+                sk_ = master_sk_to_wallet_sk(PrivateKey.from_bytes(sk_data), i)
+                pk_ = sk_.get_g1()
+                puzzle_ = puzzle_for_pk(pk_)
+                if puzzle_.get_tree_hash() == puzzle_hash:
+                    return puzzle_
 
     def balance(self):
         return 0
@@ -221,12 +155,13 @@ class CheckersRunnerWallet:
         for pkdata in self.public_key_fingerprints:
             private_key = await self.wallet_rpc_client.get_private_key(pkdata)
             sk_data = binascii.unhexlify(private_key['sk'])
-            for i in range(100):
+            for i in range(1000):
                 sk_ = master_sk_to_wallet_sk(PrivateKey.from_bytes(sk_data), i)
                 pk_ = sk_.get_g1()
                 if pk_ == pk:
                     puzzle = puzzle_for_pk(pk_)
                     puzzle_hash = puzzle.get_tree_hash()
+                    print(puzzle)
 
                     self.sk_ = sk_
                     self.pk_ = pk_
@@ -265,7 +200,8 @@ class CheckersRunnerWallet:
 
         private_key = await self.wallet_rpc_client.get_private_key(pkdata)
         sk_data = binascii.unhexlify(private_key['sk'])
-        sk_ = master_sk_to_wallet_sk(PrivateKey.from_bytes(sk_data), 0)
+        primary_sk_ = PrivateKey.from_bytes(sk_data)
+        sk_ = master_sk_to_wallet_sk(primary_sk_, 0)
         pk_ = sk_.get_g1()
         puzzle = puzzle_for_pk(pk_)
         puzzle_hash = puzzle.get_tree_hash()
@@ -316,22 +252,31 @@ class CheckersRunnerWallet:
         return coin_record
 
     async def select_identity_for_coin(self,coin):
+        print('want puzzle hash %s' % coin.puzzle_hash)
         for pkdata in self.public_key_fingerprints:
             private_key = await self.wallet_rpc_client.get_private_key(pkdata)
             sk_data = binascii.unhexlify(private_key['sk'])
-            for i in range(100):
-                sk_ = master_sk_to_wallet_sk(PrivateKey.from_bytes(sk_data), i)
+            for i in range(1000):
+                primary_sk = PrivateKey.from_bytes(sk_data)
+                sk_ = master_sk_to_wallet_sk(primary_sk, i)
                 pk_ = sk_.get_g1()
                 puzzle = puzzle_for_pk(pk_)
+                print(i, puzzle)
                 puzzle_hash = puzzle.get_tree_hash()
 
+                print('try puzzle hash %s pk %s' % (puzzle_hash, pk_))
                 if puzzle_hash == coin.puzzle_hash:
+                    self.primary_sk_ = primary_sk
                     self.sk_ = sk_
                     self.pk_ = pk_
-                    self.puzzle = puzzle
-                    self.puzzle_hash = puzzle_hash
+
+                    self.puzzle = puzzle_for_pk(self.pk_)
+                    self.puzzle_hash = self.puzzle.get_tree_hash()
 
                     self.game_records.set_self_hash(self.puzzle_hash)
+                    print('selected identity %s' % self.puzzle_hash)
+                    print('pk %s' % self.pk_)
+                    print('sk %s' % self.sk_)
 
                     return
 
@@ -413,28 +358,39 @@ class CheckersRunnerWallet:
             print(f'spending remaining {amt} to {self.puzzle_hash}')
             condition_args.append([ConditionOpcode.CREATE_COIN, self.puzzle_hash, found_coin.amount - amt])
 
+        #
+        # A note about what's going on here:
+        #
+        #  The standard coin is a 'delegated puzzle', and takes 3 arguments,
+        #  - Either () in the delegated case or a secret key if the puzzle is hidden.
+        #  - Code to run to generate conditions if the spend is allowed (a 'delegated'
+        #    puzzle.  The puzzle given here quotes the desired conditions.
+        #  - A 'solution' to the given puzzle: since this puzzle does not use its
+        #    arguments, the argument list is empty.
+        #
         delegated_puzzle_solution = Program.to((1, condition_args))
         solution = Program.to([[], delegated_puzzle_solution, []])
 
+        #
         # Sign the (delegated_puzzle_hash + coin_name) with synthetic secret key
-        signature: G2Element = AugSchemeMPL.sign(
-            calculate_synthetic_secret_key(self.sk_, DEFAULT_HIDDEN_PUZZLE_HASH),
-            (
-                delegated_puzzle_solution.get_tree_hash()
-                + found_coin.name()
-                + DEFAULT_CONSTANTS.AGG_SIG_ME_ADDITIONAL_DATA
-            ),
+        #
+        # Note that calculate_synthetic_secret_key must be used in sk_to_pk if
+        # downstream puzzles are to be used compatibly to any of the chia
+        # infrastructure.
+        #
+        original_coin_puzzle = self.puzzle_for_puzzle_hash(found_coin.as_coin().puzzle_hash)
+        print(f'original coin puzzle %s' % original_coin_puzzle)
+        solution_for_coin = CoinSpend(
+            found_coin.as_coin(),
+            original_coin_puzzle,
+            solution
         )
 
-        spend_bundle = SpendBundle(
-            [
-                CoinSpend(
-                    found_coin.as_coin(),  # Coin to spend
-                    self.puzzle,  # Puzzle used for found_coin
-                    solution,  # The solution to the puzzle locking found_coin
-                )
-            ],
-            signature,
+        spend_bundle: SpendBundle = await sign_coin_spends(
+            [solution_for_coin],
+            pk_to_sk,
+            AGG_SIG_ME_ADDITIONAL_DATA,
+            DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
         )
 
         print('debug spend bundle?')
@@ -459,18 +415,30 @@ class CheckersRunnerWallet:
         if "amt" in kwargs:
             amt = kwargs["amt"]
 
+        if "puzzle" in kwargs:
+            puzzle = kwargs["puzzle"]
+        else:
+            puzzle = coin.puzzle()
+
         delegated_puzzle_solution: Optional[Program] = None
         if "args" not in kwargs:
             target_puzzle_hash: bytes32 = self.puzzle_hash
             # Allow the user to 'give this much chia' to another user.
             if "to" in kwargs:
-                target_puzzle_hash = kwargs["to"].puzzle_hash
+                toward: Union[bytes32, Wallet] = kwargs["to"]
+                if isinstance(toward, bytes32):
+                    target_puzzle_hash = toward
+                else:
+                    target_puzzle_hash = kwargs["to"].puzzle_hash
 
             # Automatic arguments from the user's intention.
             if "custom_conditions" not in kwargs:
                 solution_list: List[List] = [[ConditionOpcode.CREATE_COIN, target_puzzle_hash, amt]]
             else:
                 solution_list = kwargs["custom_conditions"]
+
+            print(f'solution list {solution_list}')
+
             if "remain" in kwargs:
                 remainer: Union[SmartCoinWrapper, Wallet] = kwargs["remain"]
                 remain_amt = uint64(coin.amount - amt)
@@ -482,45 +450,64 @@ class CheckersRunnerWallet:
                             remain_amt,
                         ]
                     )
-                elif isinstance(remainer, Wallet):
+                elif hasattr(remainer, 'puzzle_hash'):
                     solution_list.append([ConditionOpcode.CREATE_COIN, remainer.puzzle_hash, remain_amt])
                 else:
                     raise ValueError("remainer is not a wallet or a smart coin")
 
+            #
+            # A note about what's going on here:
+            #
+            #  The standard coin is a 'delegated puzzle', and takes 3 arguments,
+            #  - Either () in the delegated case or a secret key if the puzzle is hidden.
+            #  - Code to run to generate conditions if the spend is allowed (a 'delegated'
+            #    puzzle.  The puzzle given here quotes the desired conditions.
+            #  - A 'solution' to the given puzzle: since this puzzle does not use its
+            #    arguments, the argument list is empty.
+            #
             delegated_puzzle_solution = Program.to((1, solution_list))
             # Solution is the solution for the old coin.
             solution = Program.to([[], delegated_puzzle_solution, []])
+            print(f'solution {solution}')
         else:
             delegated_puzzle_solution = Program.to(kwargs["args"])
             solution = delegated_puzzle_solution
 
+        puzzle_hash = puzzle.get_tree_hash()
+        print(f'create coin spend {type(coin.as_coin())} puzzle {type(puzzle_hash)} sol {type(solution)}')
+
         solution_for_coin = CoinSpend(
             coin.as_coin(),
-            coin.puzzle(),
+            puzzle,
             solution,
         )
 
-        # The reason this use of sign_coin_spends exists is that it correctly handles
-        # the signing for non-standard coins.  I don't fully understand the difference but
-        # this definitely does the right thing.
+        def pk_to_sk(pk):
+            print('doing pk to sk on %s' % pk)
+            return self.pk_to_sk(pk)
+
         try:
             spend_bundle: SpendBundle = await sign_coin_spends(
                 [solution_for_coin],
-                self.pk_to_sk,
-                DEFAULT_CONSTANTS.AGG_SIG_ME_ADDITIONAL_DATA,
+                pk_to_sk,
+                AGG_SIG_ME_ADDITIONAL_DATA,
                 DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
             )
-        except ValueError:
-            spend_bundle = SpendBundle(
-                [solution_for_coin],
-                G2Element(),
-            )
+        except Exception as e:
+            print('exception',e.args)
+            print('our pk is %s' % self.pk_)
+            print('our sk is %s' % self.sk_)
+            raise e
 
         if pushtx:
             pushed: Dict[str, Union[str, List[Coin]]] = await self.parent.push_tx(spend_bundle)
             return SpendResult(pushed)
         else:
             return spend_bundle
+
+    async def push_tx(self,bundle):
+        pushed: Dict[str, Union[str, List[Coin]]] = await self.parent.push_tx(bundle)
+        return SpendResult(pushed)
 
 async def main():
     black_wallet = None
@@ -580,6 +567,7 @@ async def main():
             await mywallet.select_identity_for_coin(found_coin)
 
             launcher_coin, run_coin = await mover.launch_game(found_coin)
+            print(f'launcher_coin {launcher_coin}, run_coin {run_coin}')
 
             print(f'you are playing black, identifier: {launcher_coin.name()}-{binascii.hexlify(bytes(mywallet.pk())).decode("utf-8")}-{binascii.hexlify(bytes(notmywallet.pk())).decode("utf-8")}')
 
