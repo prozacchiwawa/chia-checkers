@@ -45,7 +45,7 @@ from chia.wallet.derive_keys import master_sk_to_wallet_sk
 from cdv.test import SmartCoinWrapper, CoinPairSearch, CoinWrapper, Wallet
 
 from checkers.gamerecords import GameRecords
-from checkers.driver import CheckersMover, showBoardFromDict
+from checkers.driver import CheckersMover, showBoardFromDict, GAME_MOJO
 
 from support import SpendResult, FakeCoin, GAME_MOJO, LARGE_NUMBER_OF_BLOCKS
 
@@ -54,17 +54,6 @@ import logging
 
 AGG_SIG_ME_ADDITIONAL_DATA = get_agg_sig_me_additional_data()
 print(f'AGG_SIG_ME_ADDITIONAL_DATA = {AGG_SIG_ME_ADDITIONAL_DATA}')
-
-# These two lines enable debugging at httplib level (requests->urllib3->http.client)
-# You will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
-# The only thing missing will be the response.body which is not logged.
-try:
-    import http.client as http_client
-except ImportError:
-    # Python 2
-    import httplib as http_client
-http_client.HTTPConnection.debuglevel = 1
-## HTTP LOGGING
 
 NETNAME = 'testnet10'
 
@@ -242,8 +231,6 @@ class CheckersRunnerWallet:
             for r in t.removals:
                 if r.name() in self.usable_coins:
                     del self.usable_coins[r.name()]
-
-        print(f'usable_coins {self.usable_coins}')
 
         await self.game_records.update_to_current_block(self.blocks_ago)
 
@@ -474,10 +461,13 @@ class CheckersRunnerWallet:
             solution = delegated_puzzle_solution
 
         puzzle_hash = puzzle.get_tree_hash()
-        print(f'create coin spend {type(coin.as_coin())} puzzle {type(puzzle_hash)} sol {type(solution)}')
+
+        use_coin = coin
+        if hasattr(coin, 'as_coin'):
+            use_coin = coin.as_coin()
 
         solution_for_coin = CoinSpend(
-            coin.as_coin(),
+            use_coin,
             puzzle,
             solution,
         )
@@ -487,11 +477,15 @@ class CheckersRunnerWallet:
             return self.pk_to_sk(pk)
 
         try:
-            spend_bundle: SpendBundle = await sign_coin_spends(
+            sign_coin_spend_args = [
                 [solution_for_coin],
                 pk_to_sk,
                 AGG_SIG_ME_ADDITIONAL_DATA,
                 DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM,
+            ]
+            print('sign_coin_spend_args', sign_coin_spend_args)
+            spend_bundle: SpendBundle = await sign_coin_spends(
+                *sign_coin_spend_args
             )
         except Exception as e:
             print('exception',e.args)
@@ -566,12 +560,12 @@ async def main():
                 raise ValueError(f"could not find available coin containing {amt} mojo")
             await mywallet.select_identity_for_coin(found_coin)
 
-            launcher_coin, run_coin = await mover.launch_game(found_coin)
-            print(f'launcher_coin {launcher_coin}, run_coin {run_coin}')
+            launcher_coin, first_coin, run_coin = await mover.launch_game(found_coin)
+            print(f'launcher_coin {launcher_coin}, first_coin {first_coin}, run_coin {run_coin}')
 
             print(f'you are playing black, identifier: {launcher_coin.name()}-{binascii.hexlify(bytes(mywallet.pk())).decode("utf-8")}-{binascii.hexlify(bytes(notmywallet.pk())).decode("utf-8")}')
 
-            mywallet.game_records.remember_coin(launcher_coin.name(), run_coin.name(), mover.get_board())
+            mywallet.game_records.remember_coin(binascii.hexlify(launcher_coin.name()), first_coin.name(), run_coin.name(), mover.get_board())
         else:
             launcher_coin_name, black_public_key_str, red_public_key_str = \
                 sys.argv[1].split('-')
@@ -611,31 +605,36 @@ async def main():
                 red_wallet = mywallet
                 black_wallet = NotMeWallet(black_public_key)
                 mover = CheckersMover(inner_puzzle_code, black_wallet, red_wallet)
-                mover.set_launch_coin(FakeCoin(bytes32(binascii.unhexlify(launcher_coin_name))))
+                mover.set_launch_coin_name(launcher_coin_name)
                 await mywallet.start(mover)
 
                 # Select identity based on key embedded in game id
                 await mywallet.public_key_matches(red_public_key)
 
-            if mover.current_coin is None:
+            if mover.current_coin_name is None:
                 print(f'launcher_coin_name {launcher_coin_name}')
                 current_coin_name_and_board = mywallet.game_records.get_coin_for_launcher(binascii.unhexlify(launcher_coin_name))
                 print(f'found current game coin: {current_coin_name_and_board}')
                 if current_coin_name_and_board:
-                    current_coin_name, current_board = current_coin_name_and_board
+                    current_coin_name, first_coin_name, current_board = current_coin_name_and_board
                     current_coin = await mywallet.find_coin_by_name(current_coin_name)
-                    if not current_coin:
+                    first_coin = await mywallet.find_coin_by_name(first_coin_name)
+
+                    if not current_coin and not first_coin:
                         print(f"Couldn't yet find the most recent coin for the game.  Try again in a moment.")
                         return
 
-                    print(f'set_current_coin {current_coin}')
-                    mover.set_current_coin(current_coin)
+                    print(f'set_current_coin {current_coin_name}')
+                    print(f'set_first_coin {first_coin_name}')
+                    mover.set_current_coin_name(current_coin_name)
+                    mover.set_first_coin_name(first_coin_name)
                     mover.set_board(current_board)
 
             else:
-                mywallet.game_records.remember_coin(binascii.unhexlify(launcher_coin_name), mover.current_coin.name(), mover.get_board())
+                print(f'first_coin {mover.first_coin_name} current_coin {mover.current_coin_name}')
+                mywallet.game_records.remember_coin(binascii.unhexlify(launcher_coin_name), mover.first_coin_name, mover.current_coin_name, mover.get_board())
 
-            print(f'current coin for game {mover.current_coin}')
+            print(f'current coin for game {mover.current_coin_name}')
 
             if fromX is not None:
                 launch_coin = await mywallet.find_coin_by_name(
@@ -645,28 +644,9 @@ async def main():
                 if not matches_red:
                     await mywallet.select_identity_for_coin(launch_coin.coin)
 
-                    mover.set_launch_coin(
-                        CoinWrapper.from_coin(launch_coin.coin, None)
-                    )
+                    mover.set_launch_coin_name(launch_coin.name)
 
                 coin_puzzle = mover.get_coin_puzzle()
-                target_coin = None
-
-                if hasattr(mover.current_coin,'coin'):
-                    target_coin = \
-                        CoinWrapper.from_coin(
-                            mover.current_coin.coin,
-                            coin_puzzle
-                        )
-                else:
-                    target_coin = \
-                        CoinWrapper.from_coin(
-                            mover.current_coin,
-                            coin_puzzle
-                        )
-
-                mover.set_current_coin(target_coin)
-
                 await mover.make_move(fromX, fromY, toX, toY)
             else:
                 board = mover.get_board()

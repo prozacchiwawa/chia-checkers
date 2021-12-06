@@ -21,7 +21,7 @@ class GameRecords:
 
         self.db = sqlite3.connect('checkers.db')
         self.run_db("create table if not exists height (net text primary key, block integer)")
-        self.run_db("create table if not exists checkers (launcher text, board text, coin text)")
+        self.run_db("create table if not exists checkers (launcher text, board text, coin text, first text)")
         self.run_db("create table if not exists self (puzzle_hash)")
         self.db.commit()
 
@@ -37,17 +37,17 @@ class GameRecords:
         result = None
         cursor = self.db.cursor()
         print(f'find launcher {launcher}')
-        rows = cursor.execute('select coin, board from checkers where launcher = ? limit 1', (launcher,))
+        rows = cursor.execute('select coin, first, board from checkers where launcher = ? limit 1', (launcher,))
         for r in rows:
             print(f'found {r}')
-            result = binascii.unhexlify(r[0]), json.loads(r[1])
+            result = binascii.unhexlify(r[0]), binascii.unhexlify(r[1]), json.loads(r[2])
         cursor.close()
 
         return result
 
-    def remember_coin(self,launcher,coin,board):
+    def remember_coin(self,launcher,first,coin,board):
         self.run_db('delete from checkers where launcher = ?', (launcher,))
-        self.run_db('insert into checkers (launcher, coin, board) values (?,?,?)', (launcher, binascii.hexlify(coin), json.dumps(board)))
+        self.run_db('insert into checkers (launcher, first, coin, board) values (?,?,?,?)', (launcher, binascii.hexlify(first), binascii.hexlify(coin), json.dumps(board)))
 
     async def get_current_height_from_node(self):
         """
@@ -118,7 +118,26 @@ class GameRecords:
     async def update_to_current_block(self, blocks_ago):
         """
         Scan forward blocks to find updates involving us.
+
+        Singletons need an additional entry to tell what the
+        parent of the coin being spent is, so we give it here.
         """
+        cursor = self.db.cursor()
+
+        result = None
+        if self.mover.launch_coin_name:
+            rows = cursor.execute("select first, coin from checkers where launcher = ?", (binascii.hexlify(self.mover.launch_coin_name),))
+
+            for r in rows:
+                result = (r[0], r[1])
+
+        cursor.close()
+
+        if result is not None:
+            print(f'result from db {result}')
+            self.mover.set_first_coin_name(binascii.unhexlify(result[0]))
+            self.mover.set_current_coin_name(binascii.unhexlify(result[1]))
+
         current_block = await self.retrieve_current_block()
         new_height = await self.get_current_height_from_node()
         if new_height - blocks_ago < current_block:
