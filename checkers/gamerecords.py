@@ -2,6 +2,8 @@ import json
 import sqlite3
 import binascii
 
+from typing import Any
+
 # An object that keeps track of the game state we can see in the blockchain.
 # Using the actual arguments (third argument to standard spend), we put in our
 # assumptions about the game state and the move we intend to take, as an alist.
@@ -45,7 +47,7 @@ class GameRecords:
 
         return result
 
-    def remember_coin(self,launcher,first,coin,board):
+    def remember_coin(self,launcher: bytes,first: bytes,coin: bytes,board: Any):
         self.run_db('delete from checkers where launcher = ?', (launcher,))
         self.run_db('insert into checkers (launcher, first, coin, board) values (?,?,?,?)', (launcher, binascii.hexlify(first), binascii.hexlify(coin), json.dumps(board)))
 
