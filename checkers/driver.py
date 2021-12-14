@@ -27,8 +27,7 @@ from chia.wallet.puzzles.singleton_top_layer import lineage_proof_for_coinsol, a
 from chia.wallet.puzzles.singleton_top_layer import \
     puzzle_for_singleton, \
     launch_conditions_and_coinsol, \
-    solution_for_singleton, \
-    show_singleton_launcher_struct
+    solution_for_singleton
 
 from chia.util.condition_tools import conditions_dict_for_solution, pkm_pairs_for_conditions_dict
 from chia.util.hash import std_hash
@@ -111,6 +110,7 @@ class CheckersMover:
         self.launch_coin_name = launcher_name
         self.first_coin_name = None
         self.current_coin_name = None
+        self.grandparent_puzzle_hash = None
         self.board = INITIAL_BOARD_PYTHON
 
     async def launch_game(self,launch_coin):
@@ -253,6 +253,9 @@ class CheckersMover:
     def set_launch_coin_name(self,launch_coin_name: bytes):
         self.launch_coin_name = launch_coin_name
 
+    def set_gparent_puzzle_hash(self,puzzle_hash: bytes):
+        self.grandparent_puzzle_hash = puzzle_hash
+
     def own_conception_of_coin_id(self,launch_coin_name,launcher_puzzle_hash,amount):
         _, sha256_result = run_program(
             Program.to([11, (1, launch_coin_name), (1, launcher_puzzle_hash), (1, amount)]),
@@ -305,7 +308,6 @@ class CheckersMover:
         # A fake coin spend that will be used as a container for the lineage
         # Proof calculation.
         print(f'game coin is {hexlify(self.current_coin_name)}')
-        show_singleton_launcher_struct(self.first_coin_name)
 
         # Lineage proof is constructed differently depending on whether this is
         # the first spend.  In the case of checkers, we give the originator the
@@ -320,7 +322,7 @@ class CheckersMover:
 
         use_puzzle_for_lineage = None
         if not start_state:
-            use_puzzle_for_lineage = self.get_coin_puzzle()
+            use_puzzle_for_lineage = self.first_coin
 
         if start_state:
             first_coin_repro = Coin(
