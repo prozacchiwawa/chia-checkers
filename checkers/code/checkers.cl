@@ -1,4 +1,4 @@
-(mod (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT BOARD d1 m extra)
+(mod (SINGLETON_MOD_HASH LAUNCHER_PUZZLE_HASH BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT BOARD truths d1 m extra)
 
     (include "constants.clinc")
     (include "util.clinc")
@@ -13,6 +13,7 @@
     (include "board.clinc")
 
     (include "jump.clinc")
+    (include "singleton-related.clinc")
 
     (defun nextMove (b)
       (list
@@ -215,8 +216,10 @@
     (defun move1 (mB) (if mB (fromJust mB) (x "invalid move")))
     (defun move (m b) (move1 (move2 m b)))
 
-    (defun computeNextPuzzleHash (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
+    (defun puzzleHashOfNewCheckers (SINGLETON_MOD_HASH LAUNCHER_PUZZLE_HASH BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
       (puzzle-hash-of-curried-function
+       SINGLETON_MOD_HASH
+       LAUNCHER_PUZZLE_HASH
        BASE_INNER_PUZZLE_HASH
        (sha256tree b)
        (sha256 ONE AMT)
@@ -229,19 +232,36 @@
        )
       )
 
-    ; Return the conditions this layer requires.
+    ;; Return the conditions this layer requires.
     (defun makeMove (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT mM b)
       (list
-       (list AGG_SIG_ME
-             (if (board$next b) P2_PK P1_PK)
-             (sha256tree mM)
-             )
+       (list
+        AGG_SIG_ME
+        (if (board$next b) P2_PK P1_PK)
+        (sha256tree mM)
+        )
 
-       (list CREATE_COIN
-             (computeNextPuzzleHash
-              BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
-             AMT
-             )
+       (list
+        CREATE_COIN
+        (calculate_full_puzzle_hash
+         SINGLETON_MOD_HASH
+         LAUNCHER
+         LAUNCHER_PUZZLE_HASH
+         (puzzleHashOfNewCheckers
+          SINGLETON_MOD_HASH
+          LAUNCHER_PUZZLE_HASH
+          BASE_INNER_PUZZLE_HASH
+          LAUNCHER
+          P1_PK
+          P2_PK
+          P1_PH
+          P2_PH
+          AMT
+          b
+          )
+         )
+        AMT
+        )
        )
       )
 
@@ -290,8 +310,18 @@
 
     (defun simulationResponse (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
       (c
-       (computeNextPuzzleHash
-        BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
+       (puzzleHashOfNewCheckers
+        SINGLETON_MOD_HASH
+        LAUNCHER_PUZZLE_HASH
+        BASE_INNER_PUZZLE_HASH
+        LAUNCHER
+        P1_PK
+        P2_PK
+        P1_PH
+        P2_PH
+        AMT
+        b
+        )
        b
        )
       )

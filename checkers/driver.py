@@ -1,7 +1,7 @@
 import io
 import time
 from typing import List, Tuple, Optional
-from binascii import unhexlify
+from binascii import hexlify, unhexlify
 
 from blspy import AugSchemeMPL
 
@@ -23,6 +23,13 @@ from chia.types.spend_bundle import SpendBundle
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.load_clvm import load_clvm
 from chia.wallet.puzzles.singleton_top_layer import lineage_proof_for_coinsol, adapt_inner_to_singleton, generate_launcher_coin
+# Singleton top layer methods
+from chia.wallet.puzzles.singleton_top_layer import \
+    puzzle_for_singleton, \
+    launch_conditions_and_coinsol, \
+    solution_for_singleton, \
+    show_singleton_launcher_struct
+
 from chia.util.condition_tools import conditions_dict_for_solution, pkm_pairs_for_conditions_dict
 from chia.util.hash import std_hash
 from chia.util.ints import uint64
@@ -118,6 +125,9 @@ class CheckersMover:
         the game and update its state by looking at the arguments to the coin
         using the ```get_puzzle_and_solution``` rpc method.
         """
+
+        print(f'launch with coin {launch_coin.name()}')
+
         game_comment = [
             ("game", "checkers"),
             ("board", INITIAL_BOARD),
@@ -130,21 +140,33 @@ class CheckersMover:
         # Figure out the full singleton solution
         self.launch_coin_name = launch_coin.name()
         original_coin_puzzle = await self.black.puzzle_for_puzzle_hash(launch_coin.as_coin().puzzle_hash)
-        adapted_game_puzzle = adapt_inner_to_singleton(self.get_coin_puzzle())
-        created_singleton_puzzle = self.puzzle_for_singleton_(launch_coin.name())
+        inner_puzzle = self.get_coin_puzzle()
+        created_singleton_puzzle = puzzle_for_singleton(
+            launch_coin.name(),
+            inner_puzzle
+        )
         created_singleton_puzzle_hash = created_singleton_puzzle.get_tree_hash()
 
         # Conditions is the second argument to a conventional spend of launch_coin
         # Spend is the subsequent spend of the launcher to become launched.
         print(f'creating launcher with pk {self.black.pk()} from launch coin {launch_coin.name()}')
-        launch_conditions, spend = self.launch_conditions_and_coinsol_(
+        launch_conditions, spend = launch_conditions_and_coinsol(
             launch_coin.as_coin(),
+            inner_puzzle,
             game_comment,
             GAME_MOJO
         )
 
+        print(f'launch coin {hexlify(launch_coin.name())}')
         print(f'launch_conditions {Program.to(launch_conditions)}')
         print(f'proposed spend {spend}')
+        print(f'spend.puzzle_reveal {spend.puzzle_reveal.get_tree_hash()} vs {SINGLETON_LAUNCHER_HASH}')
+
+        launch_coin_2 = Coin(
+            launch_coin.name(),
+            spend.puzzle_reveal.get_tree_hash(),
+            amount=GAME_MOJO
+        )
 
         launch_coin_spend_into_singleton_launcher = await self.black.spend_coin(
             launch_coin,
@@ -154,12 +176,6 @@ class CheckersMover:
             to=Program.fromhex(str(spend.puzzle_reveal)).get_tree_hash(),
             remain=self.black,
             pushtx=False
-        )
-
-        launch_coin_2 = Coin(
-            launch_coin.name(),
-            spend.puzzle_reveal.get_tree_hash(),
-            amount=GAME_MOJO
         )
 
         assert launch_coin_2.name() == Coin(
@@ -180,6 +196,7 @@ class CheckersMover:
             created_singleton_puzzle_hash,
             GAME_MOJO
         )
+        print(f'expected eve coin name is {hexlify(result_coin.name())}')
 
         self.launch_coin_name = launch_coin.name()
         self.first_coin = launch_coin_2
@@ -207,6 +224,8 @@ class CheckersMover:
         specified arguments.
         """
         return self.inner_puzzle_code.curry(
+            SINGLETON_MOD_HASH,
+            SINGLETON_LAUNCHER_HASH,
             self.inner_puzzle_code.get_tree_hash(),
             self.launch_coin_name, # Launcher
             self.black.pk(),
@@ -234,6 +253,15 @@ class CheckersMover:
     def set_launch_coin_name(self,launch_coin_name: bytes):
         self.launch_coin_name = launch_coin_name
 
+    def own_conception_of_coin_id(self,launch_coin_name,launcher_puzzle_hash,amount):
+        _, sha256_result = run_program(
+            Program.to([11, (1, launch_coin_name), (1, launcher_puzzle_hash), (1, amount)]),
+            [],
+            OPERATOR_LOOKUP
+        )
+
+        return sha256_result
+
     async def make_move(self,fromX,fromY,toX,toY):
         """
         Given from and to coordinates, prepare arguments and spend the latest
@@ -245,25 +273,16 @@ class CheckersMover:
 
         current_puzzle = self.get_coin_puzzle()
 
-        simArgs = SExp.to(["simulate", maybeMove, []])
+        simArgs = SExp.to([0, "simulate", maybeMove, []])
         cost, result = run_program(
             current_puzzle,
             simArgs,
             OPERATOR_LOOKUP
         )
 
+        print(f'result {result}')
+
         expectedPuzzleHash = bytes32(result.first().as_python())
-        after_move_puzzle = self.inner_puzzle_code.curry(
-            self.inner_puzzle_code.get_tree_hash(),
-            self.launch_coin_name, # Launcher
-            self.black.pk(),
-            self.red.pk(),
-            self.black.puzzle_hash,
-            self.red.puzzle_hash,
-            GAME_MOJO,
-            result.rest(),
-        )
-        assert after_move_puzzle.get_tree_hash() == expectedPuzzleHash
 
         player_to_move = self.get_next_mover()
         moveTail = [
@@ -272,18 +291,21 @@ class CheckersMover:
             ("launcher", self.launch_coin_name)
         ]
 
-        sing_adapted_puzzle = self.puzzle_for_singleton_(
-            self.first_coin_name
+        sing_adapted_puzzle = puzzle_for_singleton(
+            self.first_coin_name,
+            self.get_coin_puzzle()
         )
-        new_adapted_puzzle = self.puzzle_for_singleton_(
-            self.current_coin_name
+        new_adapted_puzzle = puzzle_for_singleton(
+            self.current_coin_name,
+            expectedPuzzleHash
         )
 
         inner_program_args = SExp.to([[], maybeMove, moveTail])
 
         # A fake coin spend that will be used as a container for the lineage
         # Proof calculation.
-        print(f'game coin is {self.current_coin_name}')
+        print(f'game coin is {hexlify(self.current_coin_name)}')
+        show_singleton_launcher_struct(self.first_coin_name)
 
         # Lineage proof is constructed differently depending on whether this is
         # the first spend.  In the case of checkers, we give the originator the
@@ -298,7 +320,7 @@ class CheckersMover:
 
         use_puzzle_for_lineage = None
         if not start_state:
-            use_puzzle_for_lineage = sing_adapted_puzzle
+            use_puzzle_for_lineage = self.get_coin_puzzle()
 
         if start_state:
             first_coin_repro = Coin(
@@ -308,10 +330,21 @@ class CheckersMover:
             )
             print(f'first_coin_repro {first_coin_repro.name()} orig {self.first_coin_name}')
 
-        print(f'parent coin {self.first_coin_name} spending {self.current_coin_name}')
+        singleton_struct = [
+            SINGLETON_MOD_HASH,
+            [self.launch_coin_name, SINGLETON_LAUNCHER_HASH]
+        ]
+        script_idea_of_coin_id = self.own_conception_of_coin_id(
+            first_coin_repro.name(), # parent_info in lineage proof
+            singleton_struct[1][1], # launcher_puzzle_hash_for_singleton_struct
+            GAME_MOJO # amount_for_eve_proof lineage_proof
+        )
+
+        print(f'parent coin {hexlify(self.first_coin_name)} spending {hexlify(self.current_coin_name)}')
         print(f'board state curried into spend {self.board}')
-        args = self.solution_for_singleton_(
-            self.get_coin_puzzle(),
+        print(f'inner computed coin id for self {script_idea_of_coin_id}')
+
+        args = solution_for_singleton(
             LineageProof(
                 self.launch_coin_name,
                 use_puzzle_for_lineage,
@@ -322,9 +355,10 @@ class CheckersMover:
         )
 
         print(f'doing spend from {player_to_move.puzzle_hash}')
+        print(f'spending coin {hexlify(self.first_coin_name)}')
         after_move_txn = await player_to_move.spend_coin(
             Coin(
-                self.current_coin_name,
+                self.first_coin_name,
                 sing_adapted_puzzle.get_tree_hash(),
                 GAME_MOJO
             ),
@@ -346,7 +380,6 @@ class CheckersMover:
                 new_adapted_puzzle
             )
 
-            assert self.current_coin.puzzle_hash == expectedPuzzleHash
             return self.current_coin
         else:
             return True

@@ -53,6 +53,7 @@ class CheckersRunnerWallet:
         self.puzzle_hash = None
         self.wallet = None
         self.usable_coins = {}
+        self.banned_coins = set(filter(lambda x: len(x) > 0, os.environ['BANNED_COINS'].split(','))) if 'BANNED_COINS' in os.environ else set()
         self.game_records = None
 
     def pk_to_sk(self,pk):
@@ -173,9 +174,9 @@ class CheckersRunnerWallet:
         wallets = await self.wallet_rpc_client.get_wallets()
         self.wallet = wallets[0]
         transactions = await self.wallet_rpc_client.get_transactions(self.wallet['id'])
-        print(transactions)
         for t in transactions:
             for a in t.additions:
+                coin_name = binascii.hexlify(a.name()).decode('utf8')
                 if a.parent_coin_info in self.usable_coins:
                     del self.usable_coins[a.parent_coin_info]
 
@@ -240,10 +241,16 @@ class CheckersRunnerWallet:
         else:
             return None
 
+    def dont_use(self,coin):
+        return binascii.hexlify(coin[0]).decode('utf8') not in self.banned_coins
+
     async def choose_coin(self, amt):
         """Given an amount requirement, find a coin that contains at least that much chia"""
         start_balance: uint64 = self.balance()
-        coins_to_spend: Optional[List[Coin]] = self.compute_combine_action(amt, [], dict(self.usable_coins))
+        print(f'start usable coins: {self.usable_coins}')
+        usable_coins = dict(filter(self.dont_use, self.usable_coins.items()))
+        print(f'select from usable coins: {usable_coins}')
+        coins_to_spend: Optional[List[Coin]] = self.compute_combine_action(amt, [], dict(usable_coins))
 
         # Couldn't find a working combination.
         if coins_to_spend is None:
@@ -349,7 +356,7 @@ class CheckersRunnerWallet:
         """Given a coin object, invoke it on the blockchain, either as a standard
         coin if no arguments are given or with custom arguments in args="""
 
-        print(f'spend coin {coin}')
+        print(f'spend coin {coin} (id {binascii.hexlify(coin.name())})')
 
         amt = uint64(1)
         if "amt" in kwargs:

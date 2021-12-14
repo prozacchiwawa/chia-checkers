@@ -109,7 +109,7 @@ async def main():
 
             found_coin = await mywallet.choose_coin(GAME_MOJO)
             if found_coin is None:
-                raise ValueError(f"could not find available coin containing {amt} mojo")
+                raise ValueError(f"could not find available coin containing {GAME_MOJO} mojo")
             await mywallet.select_identity_for_coin(found_coin)
 
             launcher_coin, first_coin, run_coin = await mover.launch_game(found_coin)
