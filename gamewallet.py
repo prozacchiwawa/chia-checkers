@@ -150,7 +150,7 @@ async def main():
                 await mywallet.public_key_matches(red_public_key)
 
             if matches_red:
-                print(f'MATCHED RED {red_public_ley}')
+                print(f'MATCHED RED {red_public_key}')
                 # We're playing red so reconfigure.
                 mywallet.close()
 
