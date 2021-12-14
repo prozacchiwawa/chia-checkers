@@ -53,7 +53,7 @@ class CheckersRunnerWallet:
         self.puzzle_hash = None
         self.wallet = None
         self.usable_coins = {}
-        self.banned_coins = set(filter(lambda x: len(x) > 0, os.environ['BANNED_COINS'].split(','))) if 'BANNED_COINS' in os.environ else set()
+        self.banned_coins = set(filter(lambda x: len(x) > 0, os.environ['BANNED_COINS'].split())) if 'BANNED_COINS' in os.environ else set()
         self.game_records = None
 
     def pk_to_sk(self,pk):

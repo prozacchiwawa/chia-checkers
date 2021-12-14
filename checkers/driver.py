@@ -390,10 +390,16 @@ class CheckersMover:
         the coin refers to a game we're watching and if so use it as the
         current game state.
         """
-        kv_pairs = solution.rest().rest().first()
+        try:
+            kv_pairs = solution.rest().rest().first().rest().rest().first()
+        except:
+            print(f'bailing take_new_coin on solution {solution}')
+            return
 
         board = None
         launcher = None
+
+        print(kv_pairs)
 
         if not kv_pairs.listp():
             return
