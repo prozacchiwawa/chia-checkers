@@ -243,22 +243,17 @@
 
        (list
         CREATE_COIN
-        (calculate_full_puzzle_hash
+        (puzzleHashOfNewCheckers
          SINGLETON_MOD_HASH
-         LAUNCHER
          LAUNCHER_PUZZLE_HASH
-         (puzzleHashOfNewCheckers
-          SINGLETON_MOD_HASH
-          LAUNCHER_PUZZLE_HASH
-          BASE_INNER_PUZZLE_HASH
-          LAUNCHER
-          P1_PK
-          P2_PK
-          P1_PH
-          P2_PH
-          AMT
-          b
-          )
+         BASE_INNER_PUZZLE_HASH
+         LAUNCHER
+         P1_PK
+         P2_PK
+         P1_PH
+         P2_PH
+         AMT
+         b
          )
         AMT
         )

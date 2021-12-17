@@ -216,7 +216,7 @@ class CheckersMover:
             'black': convert_to_int(self.board[3])
         }
 
-    def get_coin_puzzle(self):
+    def get_puzzle_for_board_state(self,board):
         """
         Prepare the bare checkers game to be used to play a specific game.
         By providing the hash of a specifically curried program, the coin
@@ -233,9 +233,11 @@ class CheckersMover:
             self.black.puzzle_hash,
             self.red.puzzle_hash,
             GAME_MOJO,
-            SExp.to(self.board)
+            SExp.to(board)
         )
 
+    def get_coin_puzzle(self):
+        return self.get_puzzle_for_board_state(self.board)
 
     def get_next_mover(self):
         """Return the wallet whose move is next"""
@@ -296,13 +298,12 @@ class CheckersMover:
 
         sing_adapted_puzzle = puzzle_for_singleton(
             self.first_coin_name,
-            self.get_coin_puzzle()
+            current_puzzle
         )
         new_adapted_puzzle = puzzle_for_singleton(
             self.current_coin_name,
-            expectedPuzzleHash
+            self.get_puzzle_for_board_state(result.rest())
         )
-
         inner_program_args = SExp.to([[], maybeMove, moveTail])
 
         # A fake coin spend that will be used as a container for the lineage
@@ -332,19 +333,8 @@ class CheckersMover:
             )
             print(f'first_coin_repro {first_coin_repro.name()} orig {self.first_coin_name}')
 
-        singleton_struct = [
-            SINGLETON_MOD_HASH,
-            [self.launch_coin_name, SINGLETON_LAUNCHER_HASH]
-        ]
-        script_idea_of_coin_id = self.own_conception_of_coin_id(
-            first_coin_repro.name(), # parent_info in lineage proof
-            singleton_struct[1][1], # launcher_puzzle_hash_for_singleton_struct
-            GAME_MOJO # amount_for_eve_proof lineage_proof
-        )
-
         print(f'parent coin {hexlify(self.first_coin_name)} spending {hexlify(self.current_coin_name)}')
         print(f'board state curried into spend {self.board}')
-        print(f'inner computed coin id for self {script_idea_of_coin_id}')
 
         args = solution_for_singleton(
             LineageProof(
@@ -355,6 +345,10 @@ class CheckersMover:
             GAME_MOJO,
             inner_program_args
         )
+
+        print(f'run adapted puzzle {sing_adapted_puzzle}')
+        print(f'with args {args}')
+        puzzle_result = sing_adapted_puzzle.run(args)
 
         print(f'doing spend from {player_to_move.puzzle_hash}')
         print(f'spending coin {hexlify(self.first_coin_name)}')
@@ -375,14 +369,14 @@ class CheckersMover:
         if hasattr(after_move_txn.result, 'additions'):
             bare_coin = after_move_txn.result['additions'][0]
 
-            self.current_coin = CoinWrapper(
+            current_coin = CoinWrapper(
                 bare_coin.parent_coin_info,
-                after_move_puzzle.get_tree_hash(),
+                new_adapted_puzzle.get_tree_hash(),
                 GAME_MOJO,
                 new_adapted_puzzle
             )
 
-            return self.current_coin
+            return current_coin
         else:
             return True
 
