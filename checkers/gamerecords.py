@@ -38,11 +38,19 @@ class GameRecords:
         """
         result = None
         cursor = self.db.cursor()
+
+        if type(launcher) == type(b''):
+            launcher = binascii.hexlify(launcher).decode('utf8')
+
         print(f'find launcher {launcher}')
         rows = cursor.execute('select coin, board from checkers where launcher = ? limit 1', (launcher,))
-        for r in rows:
+        fetched = rows.fetchall()
+        print(f'fetched {fetched}')
+
+        for r in fetched:
             print(f'found {r}')
             result = binascii.unhexlify(r[0]), json.loads(r[1])
+
         cursor.close()
 
         return result
@@ -51,7 +59,7 @@ class GameRecords:
         self.run_db('delete from checkers where launcher = ?', (launcher,))
         self.run_db(
             'insert into checkers (launcher, coin, board) values (?,?,?)',
-            (launcher, binascii.hexlify(coin), json.dumps(board))
+            (binascii.hexlify(launcher).decode('utf8'), binascii.hexlify(coin).decode('utf8'), json.dumps(board))
         )
 
     async def get_current_height_from_node(self):
@@ -141,7 +149,7 @@ class GameRecords:
 
         if result is not None:
             print(f'result from db {result}')
-            self.mover.set_current_coin_name(binascii.unhexlify(result[1]))
+            self.mover.set_current_coin_name(binascii.unhexlify(result))
 
         current_block = await self.retrieve_current_block()
         new_height = await self.get_current_height_from_node()
