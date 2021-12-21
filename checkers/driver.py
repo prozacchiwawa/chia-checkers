@@ -36,6 +36,8 @@ from chia.util.ints import uint64
 
 from cdv.test import CoinWrapper
 
+from wallet import tohex
+
 GAME_MOJO = 1 # 1 mojo, singleton requires odd number
 INITIAL_BOARD_PYTHON = [1, 0, int_to_bytes(0xa040a040a040a040), int_to_bytes(0x205020502050205)]
 INITIAL_BOARD = SExp.to(INITIAL_BOARD_PYTHON)
@@ -102,14 +104,6 @@ def showBoardFromDict(b):
 
 def make_move_sexp(fromX,fromY,toX,toY):
     return fromX + (fromY << 8) + (toX << 16) + (toY << 24)
-
-def tohex(b):
-    if b is None:
-        return None
-    if type(b) == str:
-        return b
-    else:
-        return hexlify(b).decode('utf8')
 
 class CheckersMover:
     def __init__(self,inner_puzzle_code: Program,player_black,player_red,launcher_name: Optional[bytes] = None):
@@ -226,7 +220,7 @@ class CheckersMover:
 
     def get_board(self):
         return {
-            'blackmove': self.board[0] != b'',
+            'blackmove': convert_to_int(self.board[0]) != 0,
             'king': convert_to_int(self.board[1]),
             'red': convert_to_int(self.board[2]),
             'black': convert_to_int(self.board[3])

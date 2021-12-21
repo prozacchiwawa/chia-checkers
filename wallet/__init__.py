@@ -1,3 +1,4 @@
+import binascii
 import os
 from wallet.agg_sig_me_additional_data import get_agg_sig_me_additional_data
 
@@ -9,3 +10,11 @@ wallet_rpc_port = os.environ['CHIA_WALLET_PORT'] if 'CHIA_WALLET_PORT' in os.env
     else '9256'
 
 AGG_SIG_ME_ADDITIONAL_DATA = get_agg_sig_me_additional_data()
+
+def tohex(b):
+    if b is None:
+        return None
+    if type(b) == str:
+        return b
+    else:
+        return binascii.hexlify(b).decode('utf8')

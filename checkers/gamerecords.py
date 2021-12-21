@@ -3,6 +3,7 @@ import sqlite3
 import binascii
 
 from typing import Any
+from wallet import tohex
 
 # An object that keeps track of the game state we can see in the blockchain.
 # Using the actual arguments (third argument to standard spend), we put in our
@@ -40,7 +41,7 @@ class GameRecords:
         cursor = self.db.cursor()
 
         if type(launcher) == type(b''):
-            launcher = binascii.hexlify(launcher).decode('utf8')
+            launcher = tohex(launcher)
 
         print(f'find launcher {launcher}')
         rows = cursor.execute('select coin, board from checkers where cast(launcher as text) = ? limit 1', (launcher,))
@@ -49,7 +50,7 @@ class GameRecords:
 
         for r in fetched:
             print(f'found {r}')
-            result = binascii.unhexlify(r[0]), json.loads(r[1])
+            result = tohex(r[0]), json.loads(r[1])
 
         cursor.close()
 
@@ -59,7 +60,7 @@ class GameRecords:
         self.run_db('delete from checkers where cast(launcher as text) = ?', (launcher,))
         self.run_db(
             'insert into checkers (launcher, coin, board) values (?,?,?)',
-            (binascii.hexlify(launcher).decode('utf8'), binascii.hexlify(coin).decode('utf8'), json.dumps(board))
+            (tohex(launcher), tohex(coin), json.dumps(board))
         )
 
     async def get_current_height_from_node(self):
@@ -139,7 +140,7 @@ class GameRecords:
 
         result = None
         if self.mover.launch_coin_name:
-            hex_coin_name = self.mover.launch_coin_name if type(self.mover.launch_coin_name) == str else binascii.hexlify(self.mover.launch_coin_name)
+            hex_coin_name = tohex(self.mover.launch_coin_name)
             rows = cursor.execute("select coin from checkers where cast(launcher as text) = ?", (hex_coin_name,))
 
             for r in rows:
