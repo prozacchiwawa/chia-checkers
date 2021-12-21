@@ -235,8 +235,6 @@ class CheckersMover:
         """
         print(f'currying in identities BLACK {self.black.pk()} RED {self.red.pk()}')
         return self.inner_puzzle_code.curry(
-            SINGLETON_MOD_HASH,
-            SINGLETON_LAUNCHER_HASH,
             self.inner_puzzle_code.get_tree_hash(),
             self.launch_coin_name, # Launcher
             self.black.pk(),

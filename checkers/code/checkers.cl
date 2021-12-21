@@ -1,4 +1,4 @@
-(mod (SINGLETON_MOD_HASH LAUNCHER_PUZZLE_HASH BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT BOARD truths d1 m extra)
+(mod (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT BOARD truths d1 m extra)
 
     (include "constants.clinc")
     (include "util.clinc")
@@ -216,10 +216,8 @@
     (defun move1 (mB) (if mB (fromJust mB) (x "invalid move")))
     (defun move (m b) (move1 (move2 m b)))
 
-    (defun puzzleHashOfNewCheckers (SINGLETON_MOD_HASH LAUNCHER_PUZZLE_HASH BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
+    (defun puzzleHashOfNewCheckers (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
       (puzzle-hash-of-curried-function
-       SINGLETON_MOD_HASH
-       LAUNCHER_PUZZLE_HASH
        BASE_INNER_PUZZLE_HASH
        (sha256tree b)
        (sha256 ONE AMT)
@@ -244,8 +242,6 @@
        (list
         CREATE_COIN
         (puzzleHashOfNewCheckers
-         SINGLETON_MOD_HASH
-         LAUNCHER_PUZZLE_HASH
          BASE_INNER_PUZZLE_HASH
          LAUNCHER
          P1_PK
@@ -306,8 +302,6 @@
     (defun simulationResponse (BASE_INNER_PUZZLE_HASH LAUNCHER P1_PK P2_PK P1_PH P2_PH AMT b)
       (c
        (puzzleHashOfNewCheckers
-        SINGLETON_MOD_HASH
-        LAUNCHER_PUZZLE_HASH
         BASE_INNER_PUZZLE_HASH
         LAUNCHER
         P1_PK
