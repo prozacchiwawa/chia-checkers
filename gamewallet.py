@@ -169,6 +169,8 @@ async def main():
                 # Select identity based on key embedded in game id
                 await mywallet.public_key_matches(red_public_key)
 
+            await mywallet.update(mover)
+
             print(f'launcher_coin_name {launcher_coin_name}')
             current_coin_name_and_board = mywallet.game_records.get_coin_for_launcher(binascii.unhexlify(launcher_coin_name))
             print(f'found current game coin: {current_coin_name_and_board}')

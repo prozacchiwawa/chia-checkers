@@ -279,7 +279,7 @@ class CheckersMover:
 
         print('do move based on')
         for p in parent_list:
-            print(f'{p.name} p')
+            print(f'{p["coin"].name} p')
 
         move = make_move_sexp(fromX,fromY,toX,toY)
         maybeMove = SExp.to(move).cons(SExp.to([]))
@@ -333,16 +333,18 @@ class CheckersMover:
 
         use_puzzle_hash_for_lineage = None
         if not start_state:
-            use_puzzle_hash_for_lineage = parent_list[-1].coin.puzzle_hash
+            solution = Program.to(sexp_from_stream(io.BytesIO(unhexlify(str(parent_list[-2]['spend'].solution))), to_sexp_f))
+            print(f'parent solution was {solution}')
+            launcher, parent_board = self.isolate_state_from_solution(solution)
+            use_puzzle_hash_for_lineage = self.get_puzzle_for_board_state(parent_board).get_tree_hash()
 
-        print(f'use_puzzle_hash_for_lineage {type(use_puzzle_hash_for_lineage)}')
-
-        print(f'parent coin spending {tohex(self.current_coin_name)}')
+        print(f'use_puzzle_hash_for_lineage {use_puzzle_hash_for_lineage}')
+        print(f'"parent" coin {tohex(parent_list[-2]["coin"].coin.parent_coin_info)}')
         print(f'board state curried into spend {self.board}')
 
         args = solution_for_singleton(
             LineageProof(
-                parent_list[0].coin.parent_coin_info,
+                fromhex(parent_list[-2]["coin"].coin.parent_coin_info),
                 use_puzzle_hash_for_lineage,
                 GAME_MOJO
             ),
@@ -358,7 +360,7 @@ class CheckersMover:
         print(f'doing spend from {player_to_move.puzzle_hash}')
         print(f'coin heritage: {parent_list}')
         after_move_txn = await player_to_move.spend_coin(
-            parent_list[-1].coin,
+            parent_list[-1]['coin'].coin,
             puzzle=sing_adapted_puzzle,
             amt=GAME_MOJO,
             args=args,
@@ -380,23 +382,20 @@ class CheckersMover:
         else:
             return True
 
-    def take_new_coin(self,coin,solution):
-        """
-        Given a coin and solution from the blockchain, determine whether
-        the coin refers to a game we're watching and if so use it as the
-        current game state.
-        """
+    def isolate_state_from_solution(self,solution):
+        print(f'isolate state in {solution.as_python()}')
         try:
             kv_pairs = solution.rest().rest().first().rest().rest().first()
         except:
             print(f'bailing take_new_coin on solution {solution}')
-            return
+            return None, None
 
-        board = None
-        launcher = None
-
+        print(f'kv_pairs {kv_pairs.as_python()}')
         if not kv_pairs.listp():
-            return
+            return None, None
+
+        launcher = None
+        board = None
 
         for p in kv_pairs.as_python():
             if len(p) < 2:
@@ -407,7 +406,16 @@ class CheckersMover:
             elif p[0] == b'board':
                 board = p[1:]
 
-        print(f'kv_pairs {kv_pairs.as_python()}')
+        return launcher, board
+
+    def take_new_coin(self,coin,raw_solution):
+        """
+        Given a coin and solution from the blockchain, determine whether
+        the coin refers to a game we're watching and if so use it as the
+        current game state.
+        """
+        solution = Program.to(sexp_from_stream(io.BytesIO(unhexlify(str(raw_solution))), to_sexp_f))
+        launcher, board = self.isolate_state_from_solution(solution)
         want_launch_name = self.launch_coin_name
 
         print(f'launcher {tohex(launcher)} want {tohex(want_launch_name)}')
@@ -429,8 +437,7 @@ class CheckersMover:
             spend = await network.get_puzzle_and_solution(a.coin.parent_coin_info, height)
             if spend:
                 print(f'coin: {a.coin.name()} spend {spend}')
-                solution = Program.to(sexp_from_stream(io.BytesIO(unhexlify(str(spend.solution))), to_sexp_f))
-                self.take_new_coin(a.coin,solution)
+                self.take_new_coin(a.coin,spend.solution)
 
         self.known_height = height
 

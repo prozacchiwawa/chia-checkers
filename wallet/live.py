@@ -185,6 +185,7 @@ class CheckersRunnerWallet:
                 if r.name() in self.usable_coins:
                     del self.usable_coins[r.name()]
 
+    async def update(self,mover):
         await self.game_records.update_to_current_block(self.blocks_ago)
         print(f'update board in db with {mover.launch_coin_name} {mover.current_coin_name} {mover.get_board()}')
         if mover.current_coin_name is not None:
@@ -295,7 +296,10 @@ class CheckersRunnerWallet:
         launcher = await self.parent.get_coin_records_by_names([launch_name])
         print(f'launcher coin {launcher}')
         if len(launcher) > 0:
-            result_coin_objects.append(launcher[0])
+            result_coin_objects.append({
+                'coin': launcher[0],
+                'spend': None
+            })
         else:
             return result_coin_objects
 
@@ -306,7 +310,12 @@ class CheckersRunnerWallet:
             if result is None or len(result) == 0:
                 return result_coin_objects
 
-            result_coin_objects.append(result[0])
+            spend = await self.parent.get_puzzle_and_solution(result[0].coin.name(), result[0].spent_block_index)
+
+            result_coin_objects.append({
+                'coin': result[0],
+                'spend': spend
+            })
 
             if result[0].coin.amount > 1:
                 return result_coin_objects

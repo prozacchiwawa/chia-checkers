@@ -42,9 +42,9 @@ of the game in its solution so that they can be picked out by another
 participant, including the identity of the coin that launched it, which must
 be restated to interact with it.
 
-The game is a function that accepts 3 arguments, for a normal move:
+The game is a function that accepts 4 arguments, for a normal move:
 
-```(() (move) (("launcher" . launcher-coin) ("board" . board)))```
+```(singleton_truths () (move) (("launcher" . launcher-coin) ("board" . board)))```
 
 The game uses a board state like this:
 
