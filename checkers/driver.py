@@ -286,6 +286,7 @@ class CheckersMover:
         move = make_move_sexp(fromX,fromY,toX,toY)
         maybeMove = SExp.to(move).cons(SExp.to([]))
 
+        print(f're-creating puzzle based on board {self.board}')
         current_puzzle = self.get_coin_puzzle()
 
         simArgs = SExp.to([0, "simulate", maybeMove, []])
@@ -334,7 +335,7 @@ class CheckersMover:
 
         use_puzzle_hash_for_lineage = None
         if not start_state:
-            use_puzzle_hash_for_lineage = parent_list[0].coin.puzzle_hash
+            use_puzzle_hash_for_lineage = parent_list[-2].coin.puzzle_hash
 
         print(f'use_puzzle_hash_for_lineage {type(use_puzzle_hash_for_lineage)}')
 
