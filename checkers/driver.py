@@ -331,23 +331,21 @@ class CheckersMover:
             if Program.to(self.board[i]) != Program.to(INITIAL_BOARD_PYTHON[i]):
                 start_state = False
 
-        use_puzzle_hash_for_lineage = None
-        if not start_state:
-            solution = Program.to(sexp_from_stream(io.BytesIO(unhexlify(str(parent_list[-2]['spend'].solution))), to_sexp_f))
-            print(f'parent solution was {solution}')
-            launcher, parent_board = self.isolate_state_from_solution(solution)
-            use_puzzle_hash_for_lineage = self.get_puzzle_for_board_state(parent_board).get_tree_hash()
+        if start_state:
+            lineage_proof = LineageProof(
+                fromhex(self.launch_coin_name),
+                None,
+                GAME_MOJO
+            )
 
-        print(f'use_puzzle_hash_for_lineage {use_puzzle_hash_for_lineage}')
+        else:
+            lineage_proof = lineage_proof_for_coinsol(parent_list[-2]['spend'])
+
         print(f'"parent" coin {tohex(parent_list[-2]["coin"].coin.parent_coin_info)}')
         print(f'board state curried into spend {self.board}')
 
         args = solution_for_singleton(
-            LineageProof(
-                fromhex(parent_list[-2]["coin"].coin.parent_coin_info),
-                use_puzzle_hash_for_lineage,
-                GAME_MOJO
-            ),
+            lineage_proof,
             GAME_MOJO,
             inner_program_args
         )
