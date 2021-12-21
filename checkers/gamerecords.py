@@ -57,7 +57,7 @@ class GameRecords:
         return result
 
     def remember_coin(self,launcher: bytes,coin: bytes,board: Any):
-        self.run_db('delete from checkers where cast(launcher as text) = ?', (launcher,))
+        self.run_db('delete from checkers where cast(launcher as text) = ?', (tohex(launcher),))
         self.run_db(
             'insert into checkers (launcher, coin, board) values (?,?,?)',
             (tohex(launcher), tohex(coin), json.dumps(board))
