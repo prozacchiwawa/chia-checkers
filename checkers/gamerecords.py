@@ -140,7 +140,7 @@ class GameRecords:
         result = None
         if self.mover.launch_coin_name:
             hex_coin_name = self.mover.launch_coin_name if type(self.mover.launch_coin_name) == str else binascii.hexlify(self.mover.launch_coin_name)
-            rows = cursor.execute("select coin from checkers where launcher = ?", (hex_coin_name,))
+            rows = cursor.execute("select coin from checkers where cast(launcher as text) = ?", (hex_coin_name,))
 
             for r in rows:
                 result = r[0]
