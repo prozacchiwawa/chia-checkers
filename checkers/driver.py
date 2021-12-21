@@ -252,7 +252,7 @@ class CheckersMover:
 
     def get_next_mover(self):
         """Return the wallet whose move is next"""
-        if self.board[0] != b'':
+        if convert_to_int(self.board[0]) != 0:
             return self.black
         else:
             return self.red
@@ -319,7 +319,7 @@ class CheckersMover:
 
         # A fake coin spend that will be used as a container for the lineage
         # Proof calculation.
-        print(f'game coin is {hexlify(self.current_coin_name)}')
+        print(f'game coin is {tohex(self.current_coin_name)}')
 
         # Lineage proof is constructed differently depending on whether this is
         # the first spend.  In the case of checkers, we give the originator the
@@ -338,7 +338,7 @@ class CheckersMover:
 
         print(f'use_puzzle_hash_for_lineage {type(use_puzzle_hash_for_lineage)}')
 
-        print(f'parent coin spending {hexlify(self.current_coin_name)}')
+        print(f'parent coin spending {tohex(self.current_coin_name)}')
         print(f'board state curried into spend {self.board}')
 
         args = solution_for_singleton(
