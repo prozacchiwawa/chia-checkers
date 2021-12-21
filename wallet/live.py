@@ -186,6 +186,13 @@ class CheckersRunnerWallet:
                     del self.usable_coins[r.name()]
 
         await self.game_records.update_to_current_block(self.blocks_ago)
+        print(f'update board in db with {mover.launch_coin_name} {mover.current_coin_name} {mover.get_board()}')
+        if mover.current_coin_name is not None:
+            self.game_records.remember_coin(
+                mover.launch_coin_name,
+                mover.current_coin_name,
+                mover.get_board()
+            )
 
     async def find_coin_by_name(self,name):
         coin_record = await self.parent.get_coin_record_by_name(name)

@@ -414,6 +414,7 @@ class CheckersMover:
             elif p[0] == b'board':
                 board = p[1:]
 
+        print(f'kv_pairs {kv_pairs.as_python()}')
         want_launch_name = self.launch_coin_name
 
         print(f'launcher {tohex(launcher)} want {tohex(want_launch_name)}')
