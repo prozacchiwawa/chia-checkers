@@ -23,7 +23,7 @@ class GameRecords:
 
         self.db = sqlite3.connect('checkers.db')
         self.run_db("create table if not exists height (net text primary key, block integer)")
-        self.run_db("create table if not exists checkers (launcher text, board text, coin text, first text)")
+        self.run_db("create table if not exists checkers (launcher text, board text, coin text)")
         self.run_db("create table if not exists self (puzzle_hash)")
         self.db.commit()
 
@@ -39,17 +39,20 @@ class GameRecords:
         result = None
         cursor = self.db.cursor()
         print(f'find launcher {launcher}')
-        rows = cursor.execute('select coin, first, board from checkers where launcher = ? limit 1', (launcher,))
+        rows = cursor.execute('select coin, board from checkers where launcher = ? limit 1', (launcher,))
         for r in rows:
             print(f'found {r}')
-            result = binascii.unhexlify(r[0]), binascii.unhexlify(r[1]), json.loads(r[2])
+            result = binascii.unhexlify(r[0]), json.loads(r[1])
         cursor.close()
 
         return result
 
-    def remember_coin(self,launcher: bytes,first: bytes,coin: bytes,board: Any):
+    def remember_coin(self,launcher: bytes,coin: bytes,board: Any):
         self.run_db('delete from checkers where launcher = ?', (launcher,))
-        self.run_db('insert into checkers (launcher, first, coin, board) values (?,?,?,?)', (launcher, binascii.hexlify(first), binascii.hexlify(coin), json.dumps(board)))
+        self.run_db(
+            'insert into checkers (launcher, coin, board) values (?,?,?)',
+            (launcher, binascii.hexlify(coin), json.dumps(board))
+        )
 
     async def get_current_height_from_node(self):
         """
@@ -129,16 +132,15 @@ class GameRecords:
         result = None
         if self.mover.launch_coin_name:
             hex_coin_name = self.mover.launch_coin_name if type(self.mover.launch_coin_name) == str else binascii.hexlify(self.mover.launch_coin_name)
-            rows = cursor.execute("select first, coin from checkers where launcher = ?", (hex_coin_name,))
+            rows = cursor.execute("select coin from checkers where launcher = ?", (hex_coin_name,))
 
             for r in rows:
-                result = (r[0], r[1])
+                result = r[0]
 
         cursor.close()
 
         if result is not None:
             print(f'result from db {result}')
-            self.mover.set_first_coin_name(binascii.unhexlify(result[0]))
             self.mover.set_current_coin_name(binascii.unhexlify(result[1]))
 
         current_block = await self.retrieve_current_block()

@@ -168,7 +168,6 @@ class CheckersRunnerWallet:
         self.game_records.set_self_hash(self.puzzle_hash)
 
         self.public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
-        print(self.public_key_fingerprints)
 
         # Get usable coins
         wallets = await self.wallet_rpc_client.get_wallets()
@@ -247,9 +246,7 @@ class CheckersRunnerWallet:
     async def choose_coin(self, amt):
         """Given an amount requirement, find a coin that contains at least that much chia"""
         start_balance: uint64 = self.balance()
-        print(f'start usable coins: {self.usable_coins}')
         usable_coins = dict(filter(self.dont_use, self.usable_coins.items()))
-        print(f'select from usable coins: {usable_coins}')
         coins_to_spend: Optional[List[Coin]] = self.compute_combine_action(amt, [], dict(usable_coins))
 
         # Couldn't find a working combination.
@@ -281,6 +278,35 @@ class CheckersRunnerWallet:
 
         assert self.balance() == start_balance
         return await self.choose_coin(amt)
+
+    async def get_parent_coins(self, launch_name: bytes32):
+        """Get the trail of coins going back to the singleton launcher up to
+           num coins."""
+        result_coin_objects = []
+        blockchain_state = await self.parent.get_blockchain_state()
+
+        launcher = await self.parent.get_coin_records_by_names([launch_name])
+        print(f'launcher coin {launcher}')
+        if len(launcher) > 0:
+            result_coin_objects.append(launcher[0])
+        else:
+            return result_coin_objects
+
+        while True:
+            print(f'lookup parent id: {binascii.hexlify(launch_name)}')
+            result = await self.parent.get_coin_records_by_parent_ids([bytes32(launch_name)])
+            print(result)
+            if result is None or len(result) == 0:
+                return result_coin_objects
+
+            result_coin_objects.append(result[0])
+
+            if result[0].coin.amount > 1:
+                return result_coin_objects
+
+            launch_name = result[0].coin.name()
+
+        return reverse(result_coin_objects)
 
     async def launch_smart_coin(self, source, **kwargs):
         """Create a new smart coin based on a parent coin and return the smart coin's living

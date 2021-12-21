@@ -110,14 +110,19 @@ async def main():
             found_coin = await mywallet.choose_coin(GAME_MOJO)
             if found_coin is None:
                 raise ValueError(f"could not find available coin containing {GAME_MOJO} mojo")
+            print(f'select id for coin {found_coin.name()}')
             await mywallet.select_identity_for_coin(found_coin)
 
-            launcher_coin, first_coin, run_coin = await mover.launch_game(found_coin)
-            print(f'launcher_coin {launcher_coin}, first_coin {first_coin}, run_coin {run_coin}')
+            launcher_coin, run_coin = await mover.launch_game(found_coin)
+            print(f'launcher_coin {launcher_coin}, run_coin {run_coin}')
 
-            print(f'you are playing black, identifier: {launcher_coin.name()}-{binascii.hexlify(bytes(mywallet.pk())).decode("utf-8")}-{binascii.hexlify(bytes(notmywallet.pk())).decode("utf-8")}')
+            print(f'you are playing black, identifier: {binascii.hexlify(launcher_coin).decode("utf8")}-{binascii.hexlify(bytes(mywallet.pk())).decode("utf-8")}-{binascii.hexlify(bytes(notmywallet.pk())).decode("utf-8")}')
 
-            mywallet.game_records.remember_coin(binascii.hexlify(launcher_coin.name()), first_coin.name(), run_coin.name(), mover.get_board())
+            mywallet.game_records.remember_coin(
+                launcher_coin,
+                run_coin.name(),
+                mover.get_board()
+            )
         else:
             launcher_coin_name, black_public_key_str, red_public_key_str = \
                 sys.argv[1].split('-')
@@ -168,26 +173,25 @@ async def main():
                 print(f'launcher_coin_name {launcher_coin_name}')
                 current_coin_name_and_board = mywallet.game_records.get_coin_for_launcher(binascii.unhexlify(launcher_coin_name))
                 print(f'found current game coin: {current_coin_name_and_board}')
-                if current_coin_name_and_board:
-                    current_coin_name, first_coin_name, current_board = current_coin_name_and_board
-                    current_coin = await mywallet.find_coin_by_name(current_coin_name)
-                    first_coin = await mywallet.find_coin_by_name(first_coin_name)
 
-                    if not current_coin and not first_coin:
-                        print(f"Couldn't yet find the most recent coin for the game.  Try again in a moment.")
-                        return
+            if current_coin_name_and_board:
+                current_coin_name, current_board = current_coin_name_and_board
+                parent_coins = await mywallet.get_parent_coins(binascii.unhexlify(launcher_coin_name))
+                print(f'coins {parent_coins}')
+                if len(parent_coins) < 1:
+                    print(f"Couldn't yet find the most recent coin for the game.  Try again in a moment.")
+                    return
 
-                    print(f'set_current_coin {current_coin_name}')
-                    print(f'set_first_coin {first_coin_name}')
-                    mover.set_current_coin_name(current_coin_name)
-                    mover.set_first_coin_name(first_coin_name)
-                    mover.set_board(current_board)
-
+                mover.set_current_coin_name(current_coin_name)
+                mover.set_board(current_board)
+                mywallet.game_records.remember_coin(
+                    binascii.unhexlify(launcher_coin_name),
+                    mover.current_coin_name,
+                    mover.get_board()
+                )
             else:
-                print(f'first_coin {mover.first_coin_name} current_coin {mover.current_coin_name}')
-                remember_args = [binascii.unhexlify(launcher_coin_name), mover.first_coin_name, mover.current_coin_name, mover.get_board()]
-                print(remember_args)
-                mywallet.game_records.remember_coin(*remember_args)
+                print(f'no coin for game')
+                return
 
             print(f'current coin for game {mover.current_coin_name}')
 
@@ -197,12 +201,10 @@ async def main():
                 )
 
                 if not matches_red:
-                    await mywallet.select_identity_for_coin(launch_coin.coin)
-
+                    await mywallet.public_key_matches(black_public_key)
                     mover.set_launch_coin_name(launch_coin.name)
 
-                coin_puzzle = mover.get_coin_puzzle()
-                await mover.make_move(fromX, fromY, toX, toY)
+                await mover.make_move(parent_coins, fromX, fromY, toX, toY)
             else:
                 board = mover.get_board()
                 print(showBoardFromDict(board))
