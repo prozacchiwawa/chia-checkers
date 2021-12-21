@@ -43,7 +43,7 @@ class GameRecords:
             launcher = binascii.hexlify(launcher).decode('utf8')
 
         print(f'find launcher {launcher}')
-        rows = cursor.execute('select coin, board from checkers where launcher = ? limit 1', (launcher,))
+        rows = cursor.execute('select coin, board from checkers where cast(launcher as text) = ? limit 1', (launcher,))
         fetched = rows.fetchall()
         print(f'fetched {fetched}')
 
@@ -56,7 +56,7 @@ class GameRecords:
         return result
 
     def remember_coin(self,launcher: bytes,coin: bytes,board: Any):
-        self.run_db('delete from checkers where launcher = ?', (launcher,))
+        self.run_db('delete from checkers where cast(launcher as text) = ?', (launcher,))
         self.run_db(
             'insert into checkers (launcher, coin, board) values (?,?,?)',
             (binascii.hexlify(launcher).decode('utf8'), binascii.hexlify(coin).decode('utf8'), json.dumps(board))
