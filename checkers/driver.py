@@ -36,7 +36,7 @@ from chia.util.ints import uint64
 
 from cdv.test import CoinWrapper
 
-from wallet import tohex
+from wallet import tohex, fromhex
 
 GAME_MOJO = 1 # 1 mojo, singleton requires odd number
 INITIAL_BOARD_PYTHON = [1, 0, int_to_bytes(0xa040a040a040a040), int_to_bytes(0x205020502050205)]
@@ -236,7 +236,7 @@ class CheckersMover:
         print(f'currying in identities BLACK {self.black.pk()} RED {self.red.pk()}')
         return self.inner_puzzle_code.curry(
             self.inner_puzzle_code.get_tree_hash(),
-            self.launch_coin_name, # Launcher
+            fromhex(self.launch_coin_name), # Launcher
             self.black.pk(),
             self.red.pk(),
             self.black.puzzle_hash,
@@ -256,10 +256,10 @@ class CheckersMover:
             return self.red
 
     def set_current_coin_name(self,current_coin_name: bytes):
-        self.current_coin_name = current_coin_name
+        self.current_coin_name = fromhex(current_coin_name)
 
     def set_launch_coin_name(self,launch_coin_name: bytes):
-        self.launch_coin_name = launch_coin_name
+        self.launch_coin_name = fromhex(launch_coin_name)
 
     def own_conception_of_coin_id(self,launch_coin_name,launcher_puzzle_hash,amount):
         _, sha256_result = run_program(
@@ -333,7 +333,7 @@ class CheckersMover:
 
         use_puzzle_hash_for_lineage = None
         if not start_state:
-            use_puzzle_hash_for_lineage = parent_list[-2].coin.puzzle_hash
+            use_puzzle_hash_for_lineage = parent_list[-1].coin.puzzle_hash
 
         print(f'use_puzzle_hash_for_lineage {type(use_puzzle_hash_for_lineage)}')
 

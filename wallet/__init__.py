@@ -18,3 +18,11 @@ def tohex(b):
         return b
     else:
         return binascii.hexlify(b).decode('utf8')
+
+def fromhex(b):
+    if b is None:
+        return None
+    if type(b) == str:
+        return binascii.unhexlify(b)
+    else:
+        return b
