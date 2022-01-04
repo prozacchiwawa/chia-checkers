@@ -39,7 +39,7 @@ from support import SpendResult, FakeCoin, GAME_MOJO, LARGE_NUMBER_OF_BLOCKS
 from wallet import rpc_host, full_node_rpc_port, wallet_rpc_port, AGG_SIG_ME_ADDITIONAL_DATA
 
 class CheckersRunnerWallet:
-    def __init__(self,netname,blocks_ago):
+    def __init__(self,netname,blocks_ago,sim_network=None):
         self.parent = None
         self.blocks_ago = blocks_ago
         self.wallet_rpc_client = None
@@ -55,6 +55,17 @@ class CheckersRunnerWallet:
         self.usable_coins = {}
         self.banned_coins = set(filter(lambda x: len(x) > 0, os.environ['BANNED_COINS'].split())) if 'BANNED_COINS' in os.environ else set()
         self.game_records = None
+        self.sim_network = sim_network
+
+    async def get_public_keys(self):
+        return await self.wallet_rpc_client.get_public_keys()
+
+    def set_sim_identity(self,other):
+        self.wallet_rpc_client = other
+        self.pk_ = other.pk_
+        self.sk_ = other.sk_
+        self.puzzle = other.puzzle
+        self.puzzle_hash = other.puzzle_hash
 
     def pk_to_sk(self,pk):
         print('want pk %s (%s) have %s' % (pk, type(pk), self.pk_))
@@ -114,7 +125,13 @@ class CheckersRunnerWallet:
 
         return False
 
-    async def create_rpc_connections(self):
+    async def connect_to_chain(self):
+        if self.sim_network is None:
+            return await self.create_real_rpc_connections()
+        else:
+            self.parent = self.sim_network
+
+    async def create_real_rpc_connections(self):
         root_dir = os.environ['CHIA_ROOT'] if 'CHIA_ROOT' in os.environ \
             else os.path.join(
                     os.environ['HOME'], '.chia/mainnet'
@@ -130,7 +147,7 @@ class CheckersRunnerWallet:
         )
 
     async def wallet_get_pk(self,pkf_optional: Optional['Number']):
-        await self.create_rpc_connections()
+        await self.connect_to_chain()
         self.public_key_fingerprints = await self.wallet_rpc_client.get_public_keys()
 
         if len(self.public_key_fingerprints) == 0:
@@ -159,7 +176,7 @@ class CheckersRunnerWallet:
     async def start(self,mover):
         self.mover = mover
 
-        await self.create_rpc_connections()
+        await self.connect_to_chain()
 
         self.game_records = GameRecords(
             self.blocks_ago, self.netname, self.mover, self.parent
@@ -253,8 +270,15 @@ class CheckersRunnerWallet:
 
     async def choose_coin(self, amt):
         """Given an amount requirement, find a coin that contains at least that much chia"""
+
+        if self.sim_network is not None:
+            coin = await self.wallet_rpc_client.choose_coin(amt)
+            print(f'provider selected coin {coin}')
+            return coin
+
         start_balance: uint64 = self.balance()
         usable_coins = dict(filter(self.dont_use, self.usable_coins.items()))
+        print(f'usable_coins {usable_coins}')
         coins_to_spend: Optional[List[Coin]] = self.compute_combine_action(amt, [], dict(usable_coins))
 
         # Couldn't find a working combination.

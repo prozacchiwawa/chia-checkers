@@ -24,6 +24,7 @@ from cdv.test import setup as setup_test
 from cdv.test import CoinWrapper
 
 from checkers.driver import CheckersMover, INITIAL_BOARD, GAME_MOJO, make_move_sexp
+from wallet.testwrapper import wrap_wallet
 
 def maskFor(x,y):
     return 1 << ((8 * x) + y)
@@ -39,9 +40,9 @@ def presentMask(bytesData,x,y):
 # participant, including the identity of the coin that launched it, which must
 # be restated to interact with it.
 #
-# The game is a function that accepts 3 arguments, for a normal move:
+# The game is a function that accepts 4 arguments, for a normal move:
 #
-# (() (move) (("launcher" . launcher-coin) ("board" board)))
+# ((singleton-truths...) () (move) (("launcher" . launcher-coin) ("board" board)))
 #
 # The game uses a board state like this:
 #
@@ -82,12 +83,17 @@ class TestCheckers:
     # example piggy bank.
     @pytest.mark.asyncio
     async def test_can_launch(self, setup):
-        inner_puzzle_code, network, alice, bob = setup
+        inner_puzzle_code, network, alice_, bob_ = setup
+        alice, bob = wrap_wallet(network, alice_), wrap_wallet(network, bob_)
+        mover = CheckersMover(inner_puzzle_code, alice, bob)
+
+        # Bring up wallets
+        await alice.start(mover)
+        await bob.start(mover)
 
         await network.farm_block(farmer=alice)
 
         try:
-            mover = CheckersMover(inner_puzzle_code, alice, bob)
             launch_coin = await alice.choose_coin(GAME_MOJO)
             _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
@@ -99,12 +105,17 @@ class TestCheckers:
     # example piggy bank.
     @pytest.mark.asyncio
     async def test_can_move(self, setup):
-        inner_puzzle_code, network, alice, bob = setup
+        inner_puzzle_code, network, alice_, bob_ = setup
+        alice, bob = wrap_wallet(network, alice_), wrap_wallet(network, bob_)
+        mover = CheckersMover(inner_puzzle_code, alice, bob)
+
+        # Bring up wallets
+        await alice.start(mover)
+        await bob.start(mover)
 
         await network.farm_block(farmer=alice)
 
         try:
-            mover = CheckersMover(inner_puzzle_code, alice, bob)
             launch_coin = await alice.choose_coin(GAME_MOJO)
             _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
@@ -135,12 +146,17 @@ class TestCheckers:
     # Wrong player can't move
     @pytest.mark.asyncio
     async def test_cant_make_invalid_move(self, setup):
-        inner_puzzle_code, network, alice, bob = setup
+        inner_puzzle_code, network, alice_, bob_ = setup
+        alice, bob = wrap_wallet(network, alice_), wrap_wallet(network, bob_)
+        mover = CheckersMover(inner_puzzle_code, alice, bob)
+
+        # Bring up wallets
+        await alice.start(mover)
+        await bob.start(mover)
 
         await network.farm_block(farmer=alice)
 
         try:
-            mover = CheckersMover(inner_puzzle_code, alice, bob)
             launch_coin = await alice.choose_coin(GAME_MOJO)
             _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
@@ -170,12 +186,17 @@ class TestCheckers:
     # Can't make invalid move.
     @pytest.mark.asyncio
     async def test_wrong_person_cant_move(self, setup):
-        inner_puzzle_code, network, alice, bob = setup
+        inner_puzzle_code, network, alice_, bob_ = setup
+        alice, bob = wrap_wallet(network, alice_), wrap_wallet(network, bob_)
+        mover = CheckersMover(inner_puzzle_code, alice, bob)
+
+        # Bring up wallets
+        await alice.start(mover)
+        await bob.start(mover)
 
         await network.farm_block(farmer=alice)
 
         try:
-            mover = CheckersMover(inner_puzzle_code, alice, bob)
             launch_coin = await alice.choose_coin(GAME_MOJO)
             _, launched_coin = await mover.launch_game(launch_coin)
             assert launched_coin
@@ -205,12 +226,17 @@ class TestCheckers:
 
     @pytest.mark.asyncio
     async def test_can_move_each_player(self, setup):
-        inner_puzzle_code, network, alice, bob = setup
+        inner_puzzle_code, network, alice_, bob_ = setup
+        alice, bob = wrap_wallet(network, alice_), wrap_wallet(network, bob_)
+        runner = CheckersMover(inner_puzzle_code, alice, bob)
+
+        # Bring up wallets
+        await alice.start(runner)
+        await bob.start(runner)
 
         await network.farm_block(farmer=alice)
 
         try:
-            runner = CheckersMover(inner_puzzle_code, alice, bob)
             launch_coin = await alice.choose_coin(GAME_MOJO)
             launch_coin, launched_coin = await runner.launch_game(launch_coin)
             assert launched_coin
